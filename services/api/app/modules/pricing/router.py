@@ -297,6 +297,12 @@ def list_recommendations(
          "product_name": (db.get(Product, r.product_id).name if db.get(Product, r.product_id) else ""),
          "current_price_paise": r.current_price_paise,
          "recommended_price_paise": r.recommended_price_paise,
+         "nearby_median_price_paise": r.nearby_median_price_paise,
+         "demand_signal_price_paise": r.demand_signal_price_paise,
+         "expiry_discount_pct": float(r.expiry_discount_pct),
+         "stock_pressure_factor": float(r.stock_pressure_factor),
+         "expected_margin_bps": r.expected_margin_bps,
+         "constraints_passed": r.constraints_passed,
          "status": r.status, "explanation": r.explanation}
         for r in rows
     ]}
