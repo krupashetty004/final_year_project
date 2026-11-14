@@ -75,7 +75,7 @@ def test_rolling_origin_backtest_compares_both_baselines():
     )
     assert result["status"] == "evaluated"
     assert result["origin_count"] == 6
-    assert set(result["models"]) == {"moving_average", "seasonal_naive"}
+    assert set(result["models"]) == {"moving_average", "seasonal_naive", "croston_tsb"}
     for metrics in result["models"].values():
         assert metrics["origin_count"] == 6
         assert metrics["mae_horizon_units"] == 0
@@ -113,3 +113,28 @@ def test_rolling_origin_does_not_rank_a_baseline_from_one_window():
     assert result["minimum_origins_for_ranking"] == 3
     assert result["best_baseline_by_wape"] is None
     assert all(not metrics["ranking_eligible"] for metrics in result["models"].values())
+
+
+
+def test_croston_tsb_handles_intermittent_demand_and_zero_demand():
+    intermittent = forecast_demand(
+        [0, 0, 10, 0, 0, 0, 0, 0],
+        horizon_days=7,
+        model="croston_tsb",
+    )
+    assert intermittent.predicted_qty >= 0
+    assert intermittent.predicted_qty < 10
+
+    no_demand = forecast_demand(
+        [0] * 40,
+        horizon_days=7,
+        model="croston_tsb",
+    )
+    assert no_demand.predicted_qty == 0
+
+
+def test_croston_tsb_rejects_invalid_smoothing_parameters():
+    with pytest.raises(ValueError):
+        forecast_demand([0, 1, 0, 2], model="croston_tsb", alpha=0)
+    with pytest.raises(ValueError):
+        forecast_demand([0, 1, 0, 2], model="croston_tsb", beta=1.1)
