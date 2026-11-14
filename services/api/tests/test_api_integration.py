@@ -99,6 +99,69 @@ def test_owner_can_list_persisted_shelf_photo_reviews(owner_client):
     assert response.status_code == 200, response.text
     assert isinstance(response.json()["uploads"], list)
 
+
+def test_owner_can_list_product_reference_image_status(owner_client):
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    product = client.get("/api/v1/products?limit=1", headers=headers).json()["items"][0]
+    response = client.get(
+        f"/api/v1/inventory/stores/{store_id}/products/{product['id']}/reference-images",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert isinstance(response.json()["references"], list)
+    assert all("embedded" in item for item in response.json()["references"])
+
+
+def test_owner_reference_upload_stores_512d_embedding(owner_client, monkeypatch):
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    product = client.get("/api/v1/products?limit=1", headers=headers).json()["items"][0]
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "embedding": [1.0] + [0.0] * 511,
+                "dimension": 512,
+                "model": "openai/clip-vit-base-patch32",
+                "normalization": "l2",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.modules.inventory.router.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    response = client.post(
+        f"/api/v1/inventory/stores/{store_id}/products/{product['id']}/reference-images",
+        headers=headers,
+        files={"file": ("package.png", b"test image bytes", "image/png")},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["embedding_dimension"] == 512
+
+    listed = client.get(
+        f"/api/v1/inventory/stores/{store_id}/products/{product['id']}/reference-images",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert any(item["id"] == response.json()["id"] and item["embedded"] for item in listed.json()["references"])
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
