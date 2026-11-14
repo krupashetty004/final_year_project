@@ -126,6 +126,7 @@ def rolling_origin_backtest(
         total_absolute_error = sum(errors)
         results[model] = {
             "origin_count": len(errors),
+            "ranking_eligible": len(errors) >= 3,
             "mae_horizon_units": round(mean(errors), 4) if errors else None,
             "wape_pct": (
                 round(total_absolute_error / actual_total * 100, 4)
@@ -143,7 +144,10 @@ def rolling_origin_backtest(
         for model, metrics in results.items()
         if metrics["wape_pct"] is not None
     ]
-    best = min(eligible, key=lambda item: item[1])[0] if eligible else None
+    best = (
+        min(eligible, key=lambda item: item[1])[0]
+        if eligible and len(origins) >= 3 else None
+    )
     return {
         "status": "evaluated",
         "evaluation_method": "expanding_window_rolling_origin",
@@ -152,7 +156,8 @@ def rolling_origin_backtest(
         "step_days": step_days,
         "required_history_days": required_days,
         "available_history_days": len(values),
-        "origin_count": len(range(min_train_days, len(values) - horizon_days + 1, step_days)),
+        "origin_count": len(origins),
+        "minimum_origins_for_ranking": 3,
         "models": results,
         "best_baseline_by_wape": best,
         "metric_notes": {
