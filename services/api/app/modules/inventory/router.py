@@ -12,6 +12,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.pricing_guardrails import validate_daily_price_change
 from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
 from app.models.entities import (
@@ -232,6 +233,16 @@ def update_store_inventory(
     if body.selling_price_paise < margin_floor:
         raise HTTPException(status_code=422, detail="Selling price violates the configured minimum margin")
     old_price = item.selling_price_paise
+    if body.selling_price_paise != old_price:
+        try:
+            validate_daily_price_change(
+                old_price,
+                body.selling_price_paise,
+                item.last_price_changed_at_utc,
+            )
+        except ValueError as exc:
+            status_code = 409 if "already been recorded" in str(exc) else 422
+            raise HTTPException(status_code=status_code, detail=str(exc))
     item.available_qty = body.available_qty
     item.reserved_qty = body.reserved_qty
     item.selling_price_paise = body.selling_price_paise
@@ -690,8 +701,17 @@ def confirm_inventory_detection(
             )
             if body.selling_price_paise < margin_floor:
                 raise HTTPException(status_code=422, detail="Selling price violates the store's minimum margin")
-            item.selling_price_paise = body.selling_price_paise
-            if item.selling_price_paise != old_price:
+            if body.selling_price_paise != old_price:
+                try:
+                    validate_daily_price_change(
+                        old_price,
+                        body.selling_price_paise,
+                        item.last_price_changed_at_utc,
+                    )
+                except ValueError as exc:
+                    status_code = 409 if "already been recorded" in str(exc) else 422
+                    raise HTTPException(status_code=status_code, detail=str(exc))
+                item.selling_price_paise = body.selling_price_paise
                 now = datetime.now(timezone.utc)
                 item.last_price_changed_at_utc = now
                 db.add(PriceHistory(
