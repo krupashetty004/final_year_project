@@ -94,7 +94,7 @@ def rolling_origin_backtest(
     min_train_days: int = 28,
     step_days: int = 7,
 ) -> dict:
-    """Compare the two supported baselines using expanding-window backtests.
+    """Compare the supported baselines using expanding-window backtests.
 
     Each origin predicts the next horizon as a total quantity. MAE is measured
     in units per horizon; WAPE and bias are percentages. These metrics evaluate
