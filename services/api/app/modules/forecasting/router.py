@@ -33,7 +33,7 @@ def forecasting_module_status() -> dict:
         "stage": "baseline_forecasting_with_rolling_origin_evaluation",
         "models": ["moving_average", "seasonal_naive", "croston_tsb"],
         "evaluation": ["expanding_window_rolling_origin", "MAE", "WAPE", "bias"],
-        "not_yet_enabled": ["Croston-TSB", "LightGBM", "N-HiTS", "production model selection"],
+        "not_yet_enabled": ["LightGBM", "N-HiTS", "production model selection"],
     }
 
 
