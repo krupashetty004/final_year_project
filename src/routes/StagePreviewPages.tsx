@@ -30,7 +30,7 @@ const StageNotice: React.FC<{ stage: string; summary: string }> = ({ stage, summ
   </div>
 );
 
-type ShelfCandidate = { product_id: string; sku_code: string; name: string; brand: string; score: number };
+type ShelfCandidate = { product_id: string; sku_code: string; name: string; brand: string; score: number; score_type?: string };
 type ShelfDetection = {
   detected_product_id: string;
   detector_label: string;
@@ -400,7 +400,7 @@ export const DetectionReviewPage: React.FC = () => {
                     <ul className="mt-1 space-y-1">
                       {detection.top_matches.map((candidate) => (
                         <li key={candidate.product_id} className="text-xs text-slate-600">
-                          {candidate.sku_code} · {candidate.brand} {candidate.name} · {(candidate.score * 100).toFixed(1)}%
+                          {candidate.sku_code} · {candidate.brand} {candidate.name} · {candidate.score_type === 'cosine_similarity' ? `cosine ${candidate.score.toFixed(3)}` : `OCR ${(candidate.score * 100).toFixed(1)}%`}
                         </li>
                       ))}
                     </ul>
@@ -472,51 +472,130 @@ export const DetectionReviewPage: React.FC = () => {
 };
 
 export const ReferenceImagesPage: React.FC = () => {
-  const { data } = useQuery({
-    queryKey: ['products-ref-preview'],
-    queryFn: () =>
-      apiFetch<{
-        total: number;
-        items: Array<{ id: string; sku_code: string; name: string; brand: string; category: string }>;
-      }>('/products?limit=20&offset=0'),
+  const { activeStoreId } = useStoreContext();
+  const queryClient = useQueryClient();
+  const [selectedProductId, setSelectedProductId] = React.useState('');
+  const [file, setFile] = React.useState<File | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [message, setMessage] = React.useState('');
+
+  const { data: products = [] } = useQuery({
+    queryKey: ['reference-image-products'],
+    queryFn: () => apiFetch<Array<{ id: string; sku_code: string; name: string; brand: string; category: string }>>(
+      '/inventory/products?limit=2000',
+    ),
   });
+  const productId = selectedProductId || products[0]?.id || '';
+  const selectedProduct = products.find((product) => product.id === productId);
+  const { data, isLoading, error: referenceError } = useQuery({
+    queryKey: ['product-reference-images', activeStoreId, productId],
+    queryFn: () => apiFetch<{ references: Array<{
+      id: string; embedding_model: string; embedded: boolean; source: string;
+      created_at_utc: string; ocr_extracted_text: string | null;
+    }> }>(`/inventory/stores/${activeStoreId}/products/${productId}/reference-images`),
+    enabled: Boolean(activeStoreId && productId),
+  });
+
+  const upload = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file || !productId || !activeStoreId) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const result = await apiFetch<{ embedding_model: string; embedding_dimension: number }>(
+        `/inventory/stores/${activeStoreId}/products/${productId}/reference-images`,
+        { method: 'POST', body },
+      );
+      setMessage(`Reference image embedded using ${result.embedding_model} (${result.embedding_dimension} dimensions).`);
+      setFile(null);
+      await queryClient.invalidateQueries({ queryKey: ['product-reference-images', activeStoreId, productId] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not upload reference image');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
       <StageNotice
-        stage="Stage 1 SKU Catalogue · Stage 3 Image Matching"
-        summary={`800 master SKU reference image entries are registered in \`product_images\`. DINOv2-small / CLIP ViT-B/32 vector indexing activates in Stage 3.`}
+        stage="Stage 3 · SKU visual reference embeddings"
+        summary="Upload real product-package photos for a SKU. The vision service computes a normalized 512-dimensional CLIP embedding and stores it in PostgreSQL pgvector. Seeded placeholder paths are not treated as reference vectors."
       />
       <Card>
         <CardHeader>
-          <h3 className="font-display text-sm font-semibold text-slate-900">
-            Seeded Product-Image Metadata Registry (Sample 20 of {data?.total ?? 800})
-          </h3>
+          <h3 className="font-display text-sm font-semibold text-slate-900">Add a SKU reference photo</h3>
         </CardHeader>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
-              <tr>
-                <th className="py-2.5 px-4 font-medium">SKU</th>
-                <th className="py-2.5 px-4 font-medium">Master Product</th>
-                <th className="py-2.5 px-4 font-medium">Brand</th>
-                <th className="py-2.5 px-4 font-medium">Category</th>
-                <th className="py-2.5 px-4 font-medium">Embedding Target</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {(data?.items ?? []).map((p) => (
-                <tr key={p.id}>
-                  <td className="py-2 px-4 font-mono-num text-slate-600">{p.sku_code}</td>
-                  <td className="py-2 px-4 font-medium text-slate-900">{p.name}</td>
-                  <td className="py-2 px-4 text-slate-700">{p.brand}</td>
-                  <td className="py-2 px-4 text-slate-600">{p.category}</td>
-                  <td className="py-2 px-4 font-mono-num text-slate-500">Placeholder image path · no vector indexed</td>
-                </tr>
+        <CardContent className="space-y-3">
+          <label className="block text-xs text-slate-600">
+            Catalogue SKU
+            <select
+              value={productId}
+              onChange={(event) => setSelectedProductId(event.target.value)}
+              disabled={busy}
+              className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+            >
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.sku_code} · {product.brand} {product.name}
+                </option>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </select>
+          </label>
+          <form onSubmit={upload} className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              disabled={busy || !productId}
+              className="min-w-0 flex-1 text-xs"
+            />
+            <Button type="submit" disabled={!file || !productId || !activeStoreId || busy}>
+              {busy ? 'Embedding image…' : 'Upload and create embedding'}
+            </Button>
+          </form>
+          <p className="text-xs text-slate-500">Use clear photos of the actual package, ideally from different sides. JPEG, PNG or WebP; maximum 10 MB. Up to 25 reference photos per SKU and store.</p>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+          {message && <p className="text-xs text-teal-800">{message}</p>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <h3 className="font-display text-sm font-semibold text-slate-900">Reference registry</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              {selectedProduct ? `${selectedProduct.sku_code} · ${selectedProduct.brand} ${selectedProduct.name}` : 'Select a catalogue SKU'}
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {isLoading && <p className="text-xs text-slate-500">Loading reference records…</p>}
+          {referenceError && <p className="text-xs text-red-700">{referenceError instanceof Error ? referenceError.message : 'Could not load references'}</p>}
+          {!isLoading && !referenceError && (data?.references ?? []).length === 0 && (
+            <p className="text-xs text-slate-500">No reference records for this SKU yet. Upload a real product photo above.</p>
+          )}
+          {(data?.references ?? []).map((reference) => (
+            <div key={reference.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 p-3">
+              <div>
+                <p className="text-xs font-medium text-slate-800">{reference.embedding_model}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {reference.source.replaceAll('_', ' ')} · {new Date(reference.created_at_utc).toLocaleString('en-IN')}
+                </p>
+                {reference.ocr_extracted_text && (
+                  <p className="mt-1 text-xs text-slate-500">OCR: {reference.ocr_extracted_text}</p>
+                )}
+              </div>
+              <span className={reference.embedded ? 'text-xs text-teal-700' : 'text-xs text-amber-700'}>
+                {reference.embedded ? 'Vector available' : 'Placeholder only · ignored by matcher'}
+              </span>
+            </div>
+          ))}
+        </CardContent>
       </Card>
     </div>
   );
