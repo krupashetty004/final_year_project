@@ -55,6 +55,7 @@ export const UploadShelfPhotoPage: React.FC = () => {
   const [expiryDates, setExpiryDates] = React.useState<Record<string, string>>({});
   const [prices, setPrices] = React.useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = React.useState<string[]>([]);
+  const [rejected, setRejected] = React.useState<string[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [message, setMessage] = React.useState('');
@@ -75,6 +76,7 @@ export const UploadShelfPhotoPage: React.FC = () => {
     setMessage('');
     setAnalysis(null);
     setConfirmed([]);
+    setRejected([]);
     try {
       const body = new FormData();
       body.append('file', file);
@@ -125,6 +127,25 @@ export const UploadShelfPhotoPage: React.FC = () => {
     }
   };
 
+
+  const reject = async (detection: ShelfDetection) => {
+    if (!analysis || !activeStoreId) return;
+    setBusy(true);
+    setError('');
+    try {
+      await apiFetch(
+        `/inventory/stores/${activeStoreId}/images/${analysis.upload_id}/detections/${detection.detected_product_id}/reject`,
+        { method: 'POST', body: JSON.stringify({ notes: 'Owner rejected this detection as not an inventory item.' }) },
+      );
+      setRejected((items) => [...items, detection.detected_product_id]);
+      setMessage('Detection rejected. Inventory was not changed.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reject this detection');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <StageNotice
@@ -164,7 +185,9 @@ export const UploadShelfPhotoPage: React.FC = () => {
               <p className="text-xs text-slate-500">No objects were detected. Try a clearer, well-lit photo.</p>
             )}
             {analysis.vision.detections.map((d, index) => {
-              const done = confirmed.includes(d.detected_product_id);
+              const isConfirmed = confirmed.includes(d.detected_product_id);
+              const isRejected = rejected.includes(d.detected_product_id);
+              const done = isConfirmed || isRejected;
               return (
                 <div key={d.detected_product_id} className="rounded-lg border border-slate-200 p-3 space-y-3">
                   <div className="flex items-center justify-between gap-2">
@@ -172,7 +195,7 @@ export const UploadShelfPhotoPage: React.FC = () => {
                       Region {index + 1} · {d.detector_label} · {(d.detection_confidence * 100).toFixed(0)}% detector confidence
                     </p>
                     <span className={done ? 'text-xs text-teal-700' : 'text-xs text-amber-700'}>
-                      {done ? 'Confirmed' : d.is_unknown ? 'Unknown SKU candidate' : 'Review required'}
+                      {isConfirmed ? 'Confirmed' : isRejected ? 'Rejected' : d.is_unknown ? 'Unknown SKU candidate' : 'Review required'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500">OCR: {d.ocr_text || 'No readable package text found'}</p>
@@ -223,9 +246,14 @@ export const UploadShelfPhotoPage: React.FC = () => {
                     </label>
                   </div>
                   {!done && (
-                    <Button size="sm" disabled={busy} onClick={() => confirm(d)}>
-                      Confirm SKU and add quantity
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" disabled={busy} onClick={() => confirm(d)}>
+                        Confirm SKU and add quantity
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => reject(d)}>
+                        Reject detection
+                      </Button>
+                    </div>
                   )}
                 </div>
               );
