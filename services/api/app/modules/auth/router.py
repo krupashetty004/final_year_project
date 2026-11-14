@@ -6,6 +6,9 @@ a per-user salted password hash before exposing registration publicly.
 """
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
+import re
+from argon2 import PasswordHasher
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,6 +22,7 @@ from app.database.session import get_db
 from app.models.entities import Store, User
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+password_hasher = PasswordHasher()
 
 
 class LoginRequest(BaseModel):
@@ -38,8 +42,25 @@ class RegisterRequest(BaseModel):
     address: str = Field(min_length=4, max_length=250)
 
 
-def _password_hash(password: str) -> str:
+def _legacy_password_hash(password: str) -> str:
+    """Hash format used by the previous SQLite demo runtime."""
     return hashlib.sha256(f"retail_connect_salt::{password}".encode()).hexdigest()
+
+
+def _password_hash(password: str) -> str:
+    """Hash new passwords with Argon2id."""
+    return password_hasher.hash(password)
+
+
+def _verify_password(password: str, stored_hash: str) -> tuple[bool, bool]:
+    """Return (valid, needs_upgrade); legacy demo hashes upgrade on successful login."""
+    if re.fullmatch(r"[0-9a-f]{64}", stored_hash or ""):
+        valid = hmac.compare_digest(_legacy_password_hash(password), stored_hash)
+        return valid, valid
+    try:
+        return password_hasher.verify(stored_hash, password), password_hasher.check_needs_rehash(stored_hash)
+    except Exception:
+        return False, False
 
 
 def _issue_token(user: User) -> str:
@@ -83,8 +104,14 @@ def _session_payload(user: User, stores: list[Store]) -> dict:
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> dict:
     email = payload.email.strip().lower()
     user = db.scalar(select(User).where(User.email == email, User.is_active.is_(True)))
-    if not user or user.password_hash != _password_hash(payload.password):
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    valid, needs_upgrade = _verify_password(payload.password, user.password_hash)
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if needs_upgrade:
+        user.password_hash = _password_hash(payload.password)
+        db.commit()
     stores = list(db.scalars(select(Store).where(Store.owner_id == user.id).order_by(Store.store_code)).all())
     return _session_payload(user, stores)
 
