@@ -151,10 +151,11 @@ def get_forecast_backtest(
 def generate_reorder_suggestions(
     store_id: UUID,
     horizon_days: int = Query(default=7, ge=1, le=30),
-    model: str = Query(default="moving_average", pattern="^(moving_average|seasonal_naive|croston_tsb)$"),
+    model: str = Query(default="moving_average", pattern="^(moving_average|seasonal_naive|croston_tsb|auto)$"),
     owner: User = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Create reorder proposals using a chosen baseline or per-SKU backtest choice."""
     require_owned_store(str(store_id), owner, db)
     items = list(db.scalars(select(StoreInventory).where(StoreInventory.store_id == store_id)).all())
     if not items:
@@ -163,6 +164,8 @@ def generate_reorder_suggestions(
     created = []
     skipped_no_history = 0
     skipped_existing_pending = 0
+    models_used: dict[str, int] = {}
+
     for item in items:
         existing = db.scalar(select(ReorderSuggestion.id).where(
             ReorderSuggestion.store_id == store_id,
@@ -182,7 +185,30 @@ def generate_reorder_suggestions(
         if not any(daily):
             skipped_no_history += 1
             continue
-        forecast = forecast_demand(daily, horizon_days=horizon_days, model=model)
+
+        selected_model = model
+        selection_note = "Owner-selected forecast baseline."
+        if model == "auto":
+            evaluation = rolling_origin_backtest(
+                daily,
+                horizon_days=horizon_days,
+                min_train_days=28,
+                step_days=7,
+            )
+            selected_model = evaluation.get("best_baseline_by_wape") or "moving_average"
+            if evaluation.get("best_baseline_by_wape"):
+                selection_note = (
+                    f"Auto-selected by lowest rolling-origin WAPE across "
+                    f"{evaluation['origin_count']} evaluation windows."
+                )
+            else:
+                selection_note = (
+                    "Insufficient usable rolling-origin evidence for model ranking; "
+                    "moving-average fallback used."
+                )
+        models_used[selected_model] = models_used.get(selected_model, 0) + 1
+
+        forecast = forecast_demand(daily, horizon_days=horizon_days, model=selected_model)
         supplier = db.get(Supplier, item.supplier_id) if item.supplier_id else None
         lead_time = supplier.lead_time_days if supplier else 3
         calc = calculate_reorder(
@@ -205,9 +231,9 @@ def generate_reorder_suggestions(
             rounded_suggested_qty=calc["rounded_suggested_qty"],
             estimated_cost_paise=int(round(calc["rounded_suggested_qty"] * item.cost_price_paise)),
             explanation=(
-                f"{product.sku_code}: 180-day {model} demand baseline; "
-                "lead-time demand + 1.65 sigma safety stock; supplier-pack rounding. "
-                "This is a recommendation only; owner approval is required."
+                f"{product.sku_code}: 180-day {selected_model} demand baseline. "
+                f"{selection_note} Lead-time demand + 1.65 sigma safety stock; "
+                "supplier-pack rounding. This is a recommendation only; owner approval is required."
             ),
             status="pending",
         )
@@ -215,7 +241,14 @@ def generate_reorder_suggestions(
         created.append(suggestion)
     db.commit()
     return {
-        "store_id": str(store_id), "forecast_model": model, "created_count": len(created),
+        "store_id": str(store_id),
+        "forecast_model": model,
+        "model_selection_method": (
+            "lowest_wape_rolling_origin_with_moving_average_fallback"
+            if model == "auto" else "owner_selected"
+        ),
+        "models_used": models_used,
+        "created_count": len(created),
         "skipped_no_history": skipped_no_history,
         "skipped_existing_pending": skipped_existing_pending,
         "suggestions": [
@@ -224,7 +257,6 @@ def generate_reorder_suggestions(
             for s in created
         ],
     }
-
 
 
 class ReorderDecisionBody(BaseModel):
