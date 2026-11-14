@@ -265,14 +265,109 @@ export const UploadShelfPhotoPage: React.FC = () => {
   );
 };
 
-export const DetectionReviewPage: React.FC = () => (
-  <div className="space-y-5">
-    <StageNotice
-      stage="Stage 3 Target · Owner Detection Review"
-      summary="No shelf photographs uploaded yet. Confirmed detections will populate `inventory_image_uploads`, `detected_products`, and `owner_approvals`."
-    />
-  </div>
-);
+type PhotoReviewDetection = {
+  id: string;
+  bbox: number[];
+  detection_confidence: number;
+  ocr_text: string;
+  top_matches: ShelfCandidate[];
+  is_unknown: boolean;
+  owner_action: string;
+  selected_product_id: string | null;
+  owner_entered_qty: string | null;
+};
+type PhotoReviewUpload = {
+  id: string;
+  status: string;
+  detector_model: string;
+  detected_count: number;
+  created_at_utc: string;
+  detections: PhotoReviewDetection[];
+};
+
+export const DetectionReviewPage: React.FC = () => {
+  const { activeStoreId } = useStoreContext();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['inventory-photo-reviews', activeStoreId],
+    queryFn: () => apiFetch<{ uploads: PhotoReviewUpload[] }>(
+      `/inventory/stores/${activeStoreId}/images?limit=50`,
+    ),
+    enabled: Boolean(activeStoreId),
+  });
+
+  return (
+    <div className="space-y-5">
+      <StageNotice
+        stage="Stage 3 · Persisted owner detection review"
+        summary="Review previous shelf-photo analyses, OCR evidence, catalogue candidates and owner decisions. Unconfirmed detections remain pending; inventory changes only after owner confirmation."
+      />
+      {isLoading && <p className="text-xs text-slate-500">Loading shelf-photo history…</p>}
+      {error && <p className="text-xs text-red-700">{error instanceof Error ? error.message : 'Could not load shelf-photo history'}</p>}
+      {!isLoading && !error && (data?.uploads ?? []).length === 0 && (
+        <Card>
+          <CardContent>
+            <p className="py-3 text-xs text-slate-500">No shelf-photo analyses have been recorded for this store.</p>
+            <Link to="/inventory" className="text-xs font-medium text-teal-800 underline">Open inventory to start a shelf-photo analysis</Link>
+          </CardContent>
+        </Card>
+      )}
+      {(data?.uploads ?? []).map((upload) => (
+        <Card key={upload.id}>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display text-sm font-semibold text-slate-900">
+                  Shelf photo · {new Date(upload.created_at_utc).toLocaleString('en-IN')}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  {upload.detector_model} · {upload.detected_count} object regions · Upload {upload.id.slice(0, 8)}
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">{upload.status.replaceAll('_', ' ')}</span>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {upload.detections.length === 0 && (
+              <p className="text-xs text-slate-500">No object regions were recorded for this upload.</p>
+            )}
+            {upload.detections.map((detection, index) => (
+              <div key={detection.id} className="rounded-lg border border-slate-200 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-900">
+                    Region {index + 1} · {(detection.detection_confidence * 100).toFixed(0)}% detector confidence
+                  </p>
+                  <span className="text-xs text-slate-600">{detection.owner_action.replaceAll('_', ' ')}</span>
+                </div>
+                <p className="text-xs text-slate-500">OCR evidence: {detection.ocr_text || 'No readable package text'}</p>
+                {detection.selected_product_id && (
+                  <p className="text-xs text-slate-700">Owner-selected product ID: {detection.selected_product_id}</p>
+                )}
+                {detection.owner_entered_qty && (
+                  <p className="text-xs text-slate-700">Owner-confirmed quantity added: {detection.owner_entered_qty}</p>
+                )}
+                {detection.top_matches.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-600">Ranked catalogue candidates</p>
+                    <ul className="mt-1 space-y-1">
+                      {detection.top_matches.map((candidate) => (
+                        <li key={candidate.product_id} className="text-xs text-slate-600">
+                          {candidate.sku_code} · {candidate.brand} {candidate.name} · {(candidate.score * 100).toFixed(1)}%
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {detection.owner_action === 'pending' && (
+                  <p className="text-xs text-amber-700">This detection still requires owner review. Open the shelf-photo upload screen to review a new photo; historical pending items remain visible here.</p>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+};
 
 export const ReferenceImagesPage: React.FC = () => {
   const { data } = useQuery({
