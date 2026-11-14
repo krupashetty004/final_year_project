@@ -151,6 +151,7 @@ def get_forecast_backtest(
 def generate_reorder_suggestions(
     store_id: UUID,
     horizon_days: int = Query(default=7, ge=1, le=30),
+    model: str = Query(default="moving_average", pattern="^(moving_average|seasonal_naive|croston_tsb)$"),
     owner: User = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -181,7 +182,7 @@ def generate_reorder_suggestions(
         if not any(daily):
             skipped_no_history += 1
             continue
-        forecast = forecast_demand(daily, horizon_days=horizon_days, model="moving_average")
+        forecast = forecast_demand(daily, horizon_days=horizon_days, model=model)
         supplier = db.get(Supplier, item.supplier_id) if item.supplier_id else None
         lead_time = supplier.lead_time_days if supplier else 3
         calc = calculate_reorder(
@@ -204,7 +205,7 @@ def generate_reorder_suggestions(
             rounded_suggested_qty=calc["rounded_suggested_qty"],
             estimated_cost_paise=int(round(calc["rounded_suggested_qty"] * item.cost_price_paise)),
             explanation=(
-                f"{product.sku_code}: 180-day daily moving-average baseline; "
+                f"{product.sku_code}: 180-day {model} demand baseline; "
                 "lead-time demand + 1.65 sigma safety stock; supplier-pack rounding. "
                 "This is a recommendation only; owner approval is required."
             ),
@@ -214,7 +215,7 @@ def generate_reorder_suggestions(
         created.append(suggestion)
     db.commit()
     return {
-        "store_id": str(store_id), "created_count": len(created),
+        "store_id": str(store_id), "forecast_model": model, "created_count": len(created),
         "skipped_no_history": skipped_no_history,
         "skipped_existing_pending": skipped_existing_pending,
         "suggestions": [
