@@ -16,7 +16,7 @@ from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
 from app.models.entities import (
     DetectedProduct, InventoryImageUpload, OwnerApproval, PriceHistory, Product, StockBatch,
-    StoreInventory, Store, Supplier, User,
+    StoreInventory, Store, Supplier, User, ProductImage,
 )
 from app.schemas.common import ProductRead, StoreSummary
 
@@ -241,6 +241,124 @@ def list_store_batches(
             "status": batch.status, "expiry_category": expiry_category,
         })
     return {"batches": batches}
+
+
+@router.post("/stores/{store_id}/products/{product_id}/reference-images", status_code=201)
+async def upload_product_reference_image(
+    store_id: UUID,
+    product_id: UUID,
+    file: UploadFile = File(...),
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Embed and persist a real owner-uploaded reference photo for one SKU."""
+    require_owned_store(str(store_id), owner, db)
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Catalogue product not found")
+    suffix = ALLOWED_IMAGE_TYPES.get(file.content_type or "")
+    if not suffix:
+        raise HTTPException(status_code=415, detail="Only JPEG, PNG and WebP images are supported")
+    raw = await file.read(MAX_IMAGE_BYTES + 1)
+    if not raw or len(raw) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be non-empty and no larger than 10 MB")
+
+    current_references = db.scalars(select(ProductImage.id).where(
+        ProductImage.product_id == product_id,
+        ProductImage.is_reference.is_(True),
+        (ProductImage.store_id.is_(None)) | (ProductImage.store_id == store_id),
+    ).limit(25)).all()
+    if len(current_references) >= 25:
+        raise HTTPException(status_code=409, detail="A maximum of 25 reference images is allowed per SKU and store")
+
+    vision_url = get_settings().VISION_SERVICE_URL.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            response = await client.post(
+                f"{vision_url}/embed",
+                files={"file": (file.filename or f"{product.sku_code}{suffix}", raw, file.content_type)},
+            )
+            response.raise_for_status()
+        result = response.json()
+        embedding = result.get("embedding")
+        model_name = result.get("model")
+        if (
+            not isinstance(embedding, list)
+            or len(embedding) != 512
+            or not model_name
+            or not all(isinstance(value, (int, float)) for value in embedding)
+        ):
+            raise ValueError("Vision service did not return a valid 512-dimensional embedding")
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail=f"Could not embed reference image: {exc}")
+
+    reference_id = uuid4()
+    filename = f"{reference_id}{suffix}"
+    reference_dir = (
+        Path(__file__).resolve().parents[3]
+        / "uploads" / "references" / str(store_id) / str(product_id)
+    )
+    reference_dir.mkdir(parents=True, exist_ok=True)
+    file_path = reference_dir / filename
+    relative_path = str(Path("uploads") / "references" / str(store_id) / str(product_id) / filename)
+    file_path.write_bytes(raw)
+    reference = ProductImage(
+        id=reference_id,
+        product_id=product_id,
+        store_id=store_id,
+        image_url=f"local://{relative_path.replace(chr(92), '/')}",
+        storage_path=relative_path.replace(chr(92), "/"),
+        is_reference=True,
+        embedding=embedding,
+        embedding_model=model_name,
+    )
+    try:
+        db.add(reference)
+        db.commit()
+    except Exception:
+        db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise
+    return {
+        "id": str(reference.id),
+        "product_id": str(product_id),
+        "sku_code": product.sku_code,
+        "embedding_model": model_name,
+        "embedding_dimension": len(embedding),
+        "is_reference": True,
+    }
+
+
+@router.get("/stores/{store_id}/products/{product_id}/reference-images")
+def list_product_reference_images(
+    store_id: UUID,
+    product_id: UUID,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List real and placeholder reference-image metadata for the selected SKU."""
+    require_owned_store(str(store_id), owner, db)
+    if not db.get(Product, product_id):
+        raise HTTPException(status_code=404, detail="Catalogue product not found")
+    rows = db.scalars(select(ProductImage).where(
+        ProductImage.product_id == product_id,
+        ProductImage.is_reference.is_(True),
+        (ProductImage.store_id.is_(None)) | (ProductImage.store_id == store_id),
+    ).order_by(ProductImage.created_at_utc.desc())).all()
+    return {
+        "product_id": str(product_id),
+        "references": [
+            {
+                "id": str(row.id),
+                "embedding_model": row.embedding_model,
+                "embedded": row.embedding is not None,
+                "source": "store_upload" if row.store_id == store_id else "seeded_or_global",
+                "created_at_utc": row.created_at_utc.isoformat(),
+                "ocr_extracted_text": row.ocr_extracted_text,
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.post("/stores/{store_id}/images/analyze")
