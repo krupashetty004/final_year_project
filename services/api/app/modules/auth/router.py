@@ -1,8 +1,8 @@
 """Authentication endpoints for the standalone FastAPI deployment.
 
-The SHA-256 verifier is retained for compatibility with the existing Express
-preview runtime and seeded database. For production, migrate both runtimes to
-a per-user salted password hash before exposing registration publicly.
+New passwords use Argon2id. A legacy SHA-256 verifier is retained only for
+seeded preview-account compatibility; successful legacy logins upgrade the
+stored hash to Argon2id.
 """
 from datetime import datetime, timedelta, timezone
 import hashlib
