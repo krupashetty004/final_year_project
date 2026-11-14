@@ -1,0 +1,6 @@
+{
+  "name": "AI Powered Retail Connect",
+  "description": "Agentic AI-Powered Hyperlocal Commerce Platform for Kirana Stores (Objectives O1 & O2: Inventory Agent and Smart Pricing Agent).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
