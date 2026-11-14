@@ -190,6 +190,30 @@ python run_detection_eval.py .\data\labelled_shelf_manifest.jsonl --weights yolo
 
 The script retains low-confidence YOLO proposals for AP calculation, then applies the score confidence threshold to precision/recall/F1. The report measures class-agnostic region localization only; it does not measure SKU identity, class correctness or quantity estimation. Do not report AP@0.50 as SKU mAP. Real held-out shelf photos and labelled boxes are still needed before the generic YOLO detector can be considered validated.
 
+### Retail-package detector fine-tuning
+
+The training runner is ready for a real YOLO-format package-region dataset. It does not auto-label images or promote predictions to ground truth. A minimal dataset YAML is:
+
+~~~yaml
+path: ./kirana_package_dataset
+train: images/train
+val: images/val
+names:
+  0: product_package
+~~~
+
+Each image requires a matching YOLO label file under `labels/train` or `labels/val`; rows use `class_id x_center y_center width height` with normalized coordinates. Keep train/validation photos separate by original shelf photo/session and, where possible, store. This detector learns package-region localization; CLIP reference embeddings remain responsible for SKU retrieval.
+
+Run from `services/vision` after preparing the dataset:
+
+~~~powershell
+python train_retail_detector.py --data .\\data\\kirana_package_dataset.yaml --weights yolo11n.pt --epochs 100 --imgsz 640 --batch 16 --report .\\runs\\retail_detector\\training_metrics.json
+python run_detection_eval.py .\\data\\heldout_shelf_manifest.jsonl --weights .\\runs\\retail_detector\\package-regions\\weights\\best.pt --output .\\runs\\retail_detector\\heldout_metrics.json
+~~~
+
+The first report is validation-split performance during training. The second report is the separate held-out region evaluation. Neither measures SKU retrieval or stock quantity counting. No retail-specific weights are trained or activated in this repository until a real labelled dataset is supplied.
+
+
 
 
 ## Important security, data and deployment limitations
