@@ -664,7 +664,7 @@ export const DemandForecastingPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 4 · Sales history and SKU demand baseline"
-        summary="The historical chart shows recorded store sales. Per-SKU forecasts offer moving-average, seven-day seasonal-naive and Croston TSB for intermittent demand. Rolling-origin backtests compare all three using MAE, WAPE and bias. LightGBM, N-HiTS and production model selection are not enabled yet."
+        summary="The historical chart shows recorded store sales. Per-SKU forecasts offer moving-average, seven-day seasonal-naive and Croston TSB for intermittent demand. Rolling-origin backtests compare all three using MAE, WAPE and bias, excluding synthetic seed sales by default. Add real sales history to see validation metrics. LightGBM, N-HiTS and production model selection are not enabled yet."
       />
       <Card>
         <CardHeader>
