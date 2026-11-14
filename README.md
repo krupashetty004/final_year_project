@@ -19,7 +19,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - Owner review UI can select/correct a SKU, confirm or reject a detection, enter the physically counted quantity, and optionally enter an expiry date and selling price.
 - Only owner-confirmed quantities change inventory. Confirm/reject decisions are recorded in owner approvals.
 - Moving-average, seven-day seasonal-naive and Croston-TSB intermittent-demand baselines.
-- Expanding-window rolling-origin evaluation for both baselines, reporting horizon-level MAE, WAPE and forecast bias.
+- Expanding-window rolling-origin evaluation for all three baselines, reporting horizon-level MAE, WAPE and forecast bias.
 - Reorder-point calculation using lead-time demand plus safety stock, with supplier pack-size rounding.
 - Reorder suggestions support owner accept/edit/reject. Approval does not automatically place a purchase order.
 
