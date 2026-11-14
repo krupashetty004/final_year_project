@@ -1,7 +1,12 @@
 import pytest
 
 from app.modules.forecasting.engine import calculate_reorder, forecast_demand, rolling_origin_backtest
-from app.modules.pricing.engine import PricingInputs, minimum_selling_price_paise, recommend_price
+from app.modules.pricing.engine import (
+    PricingInputs,
+    derive_demand_price_signal,
+    minimum_selling_price_paise,
+    recommend_price,
+)
 
 
 def test_moving_average_forecast_is_non_negative():
@@ -226,3 +231,26 @@ def test_minimum_margin_floor_rejects_invalid_configuration():
         minimum_selling_price_paise(10000, 9001)
     with pytest.raises(ValueError):
         minimum_selling_price_paise(-1, 1000)
+
+
+
+@pytest.mark.parametrize(
+    ("recent_7d", "previous_28d", "direction", "signal_price"),
+    [
+        (10, 28, "high_demand", 10300),
+        (3, 28, "low_demand", 9700),
+        (7, 28, "neutral", None),
+        (5, 0, "insufficient_baseline", None),
+    ],
+)
+def test_real_sales_demand_signal_thresholds(recent_7d, previous_28d, direction, signal_price):
+    result = derive_demand_price_signal(10000, recent_7d, previous_28d)
+    assert result["direction"] == direction
+    assert result["signal_price_paise"] == signal_price
+
+
+def test_demand_signal_rejects_negative_or_non_finite_sales():
+    with pytest.raises(ValueError):
+        derive_demand_price_signal(10000, -1, 28)
+    with pytest.raises(ValueError):
+        derive_demand_price_signal(10000, 7, float("nan"))
