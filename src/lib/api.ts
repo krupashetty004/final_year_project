@@ -10,10 +10,10 @@ export interface StoreSummary {
   pincode: string;
   latitude: number;
   longitude: number;
-  is_verified: number;
+  is_verified: boolean;
   default_min_margin_bps: number;
-  clearance_below_margin_allowed: number;
-  is_synthetic: number;
+  clearance_below_margin_allowed: boolean;
+  is_synthetic: boolean;
   owner_name?: string;
   owner_email?: string;
 }
