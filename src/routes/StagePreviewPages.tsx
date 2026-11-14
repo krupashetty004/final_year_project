@@ -709,7 +709,7 @@ export const ProductAnalyticsPage: React.FC = () => {
           status: string;
           expiry_category: string;
         }>;
-      }>(`/stores/${activeStoreId}/batches`),
+      }>(`/inventory/stores/${activeStoreId}/batches`),
     enabled: Boolean(activeStoreId),
   });
 
