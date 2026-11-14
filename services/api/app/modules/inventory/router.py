@@ -26,8 +26,14 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": 
 
 
 @router.get("/stores", response_model=list[StoreSummary])
-def list_stores(db: Session = Depends(get_db)) -> list[Store]:
-    return list(db.scalars(select(Store).order_by(Store.store_code)).all())
+def list_stores(
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> list[Store]:
+    """Return only stores belonging to the authenticated owner."""
+    return list(db.scalars(
+        select(Store).where(Store.owner_id == owner.id).order_by(Store.store_code)
+    ).all())
 
 
 @router.get("/products", response_model=list[ProductRead])
@@ -48,7 +54,12 @@ def list_products(
 
 
 @router.get("/stores/{store_id}/summary")
-def get_store_inventory_summary(store_id: UUID, db: Session = Depends(get_db)) -> dict:
+def get_store_inventory_summary(
+    store_id: UUID,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
     rows = list(db.scalars(select(StoreInventory).where(StoreInventory.store_id == store_id)).all())
     low_stock = sum(1 for r in rows if r.available_qty > 0 and r.available_qty <= r.reorder_point_qty)
     out_of_stock = sum(1 for r in rows if r.available_qty == 0)
@@ -313,6 +324,68 @@ async def analyze_inventory_photo(
         raise HTTPException(status_code=502, detail=f"Vision analysis failed; photo retained for retry: {exc}")
 
 
+
+
+
+@router.get("/stores/{store_id}/images")
+def list_inventory_photo_reviews(
+    store_id: UUID,
+    limit: int = Query(default=50, ge=1, le=100),
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List persisted shelf-photo uploads and their owner-review state."""
+    require_owned_store(str(store_id), owner, db)
+    uploads = db.scalars(
+        select(InventoryImageUpload)
+        .where(InventoryImageUpload.store_id == store_id)
+        .order_by(InventoryImageUpload.created_at_utc.desc())
+        .limit(limit)
+    ).all()
+    upload_ids = [upload.id for upload in uploads]
+    detections_by_upload: dict[UUID, list[DetectedProduct]] = {upload_id: [] for upload_id in upload_ids}
+    if upload_ids:
+        detections = db.scalars(
+            select(DetectedProduct)
+            .where(DetectedProduct.upload_id.in_(upload_ids))
+            .order_by(DetectedProduct.created_at_utc.asc())
+        ).all()
+        for detection in detections:
+            detections_by_upload.setdefault(detection.upload_id, []).append(detection)
+
+    return {
+        "uploads": [
+            {
+                "id": str(upload.id),
+                "status": upload.status,
+                "detector_model": upload.detector_model,
+                "detected_count": upload.detected_count,
+                "created_at_utc": upload.created_at_utc.isoformat(),
+                "detections": [
+                    {
+                        "id": str(detection.id),
+                        "bbox": [
+                            float(detection.bbox_x1), float(detection.bbox_y1),
+                            float(detection.bbox_x2), float(detection.bbox_y2),
+                        ],
+                        "detection_confidence": float(detection.detection_confidence),
+                        "ocr_text": detection.ocr_text or "",
+                        "top_matches": detection.top_matches_json or [],
+                        "is_unknown": detection.is_unknown,
+                        "owner_action": detection.owner_action,
+                        "selected_product_id": (
+                            str(detection.selected_product_id) if detection.selected_product_id else None
+                        ),
+                        "owner_entered_qty": (
+                            str(detection.owner_entered_qty) if detection.owner_entered_qty is not None else None
+                        ),
+                    }
+                    for detection in detections_by_upload.get(upload.id, [])
+                ],
+            }
+            for upload in uploads
+        ]
+    }
 
 
 class RejectDetectionBody(BaseModel):
