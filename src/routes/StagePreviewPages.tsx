@@ -287,13 +287,64 @@ type PhotoReviewUpload = {
 
 export const DetectionReviewPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
-  const { data, isLoading, error } = useQuery({
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = React.useState<Record<string, string>>({});
+  const [quantities, setQuantities] = React.useState<Record<string, string>>({});
+  const [expiryDates, setExpiryDates] = React.useState<Record<string, string>>({});
+  const [prices, setPrices] = React.useState<Record<string, string>>({});
+  const [busyId, setBusyId] = React.useState('');
+  const [error, setError] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const { data, isLoading, error: queryError } = useQuery({
     queryKey: ['inventory-photo-reviews', activeStoreId],
     queryFn: () => apiFetch<{ uploads: PhotoReviewUpload[] }>(
       `/inventory/stores/${activeStoreId}/images?limit=50`,
     ),
     enabled: Boolean(activeStoreId),
   });
+  const { data: catalogue = [] } = useQuery({
+    queryKey: ['inventory-catalogue-for-review'],
+    queryFn: () => apiFetch<Array<{ id: string; sku_code: string; name: string; brand: string }>>(
+      '/inventory/products?limit=2000',
+    ),
+  });
+
+  const decide = async (uploadId: string, detection: PhotoReviewDetection, decision: 'confirm' | 'reject') => {
+    if (!activeStoreId) return;
+    setBusyId(detection.id);
+    setError('');
+    setMessage('');
+    try {
+      const endpoint = `/inventory/stores/${activeStoreId}/images/${uploadId}/detections/${detection.id}/${decision}`;
+      if (decision === 'reject') {
+        await apiFetch(endpoint, {
+          method: 'POST',
+          body: JSON.stringify({ notes: 'Owner rejected this historical detection.' }),
+        });
+      } else {
+        const productId = selected[detection.id] ?? detection.top_matches[0]?.product_id ?? '';
+        const quantity = Number(quantities[detection.id]);
+        if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+          setError('Select a catalogue SKU and enter the physically counted quantity.');
+          return;
+        }
+        const payload: Record<string, unknown> = { product_id: productId, quantity };
+        const expiry = expiryDates[detection.id];
+        const price = prices[detection.id];
+        if (expiry) payload.expiry_date = expiry;
+        if (price) payload.selling_price_paise = Math.round(Number(price) * 100);
+        await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+      }
+      setMessage(decision === 'confirm' ? 'Owner-confirmed stock added to inventory.' : 'Detection rejected; inventory was not changed.');
+      await queryClient.invalidateQueries({ queryKey: ['inventory-photo-reviews', activeStoreId] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save owner review');
+    } finally {
+      setBusyId('');
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -302,8 +353,9 @@ export const DetectionReviewPage: React.FC = () => {
         summary="Review previous shelf-photo analyses, OCR evidence, catalogue candidates and owner decisions. Unconfirmed detections remain pending; inventory changes only after owner confirmation."
       />
       {isLoading && <p className="text-xs text-slate-500">Loading shelf-photo history…</p>}
-      {error && <p className="text-xs text-red-700">{error instanceof Error ? error.message : 'Could not load shelf-photo history'}</p>}
-      {!isLoading && !error && (data?.uploads ?? []).length === 0 && (
+      {(queryError || error) && <p className="text-xs text-red-700">{error || (queryError instanceof Error ? queryError.message : 'Could not load shelf-photo history')}</p>}
+      {message && <p className="text-xs text-teal-800">{message}</p>}
+      {!isLoading && !queryError && (data?.uploads ?? []).length === 0 && (
         <Card>
           <CardContent>
             <p className="py-3 text-xs text-slate-500">No shelf-photo analyses have been recorded for this store.</p>
@@ -339,9 +391,6 @@ export const DetectionReviewPage: React.FC = () => {
                   <span className="text-xs text-slate-600">{detection.owner_action.replaceAll('_', ' ')}</span>
                 </div>
                 <p className="text-xs text-slate-500">OCR evidence: {detection.ocr_text || 'No readable package text'}</p>
-                {detection.selected_product_id && (
-                  <p className="text-xs text-slate-700">Owner-selected product ID: {detection.selected_product_id}</p>
-                )}
                 {detection.owner_entered_qty && (
                   <p className="text-xs text-slate-700">Owner-confirmed quantity added: {detection.owner_entered_qty}</p>
                 )}
@@ -358,7 +407,60 @@ export const DetectionReviewPage: React.FC = () => {
                   </div>
                 )}
                 {detection.owner_action === 'pending' && (
-                  <p className="text-xs text-amber-700">This detection still requires owner review. Open the shelf-photo upload screen to review a new photo; historical pending items remain visible here.</p>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <label className="text-xs text-slate-600">
+                      Confirm SKU
+                      <select
+                        value={selected[detection.id] ?? detection.top_matches[0]?.product_id ?? ''}
+                        disabled={busyId === detection.id}
+                        onChange={(event) => setSelected((v) => ({ ...v, [detection.id]: event.target.value }))}
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+                      >
+                        <option value="">Choose a product</option>
+                        {catalogue.map((product) => (
+                          <option key={product.id} value={product.id}>{product.sku_code} · {product.brand} {product.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Physically counted quantity
+                      <input
+                        type="number" min="0.001" step="0.001"
+                        value={quantities[detection.id] ?? ''}
+                        disabled={busyId === detection.id}
+                        onChange={(event) => setQuantities((v) => ({ ...v, [detection.id]: event.target.value }))}
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+                      />
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Batch expiry date (optional)
+                      <input
+                        type="date"
+                        value={expiryDates[detection.id] ?? ''}
+                        disabled={busyId === detection.id}
+                        onChange={(event) => setExpiryDates((v) => ({ ...v, [detection.id]: event.target.value }))}
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+                      />
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Selling price in ₹ (optional)
+                      <input
+                        type="number" min="0.01" step="0.01"
+                        value={prices[detection.id] ?? ''}
+                        disabled={busyId === detection.id}
+                        onChange={(event) => setPrices((v) => ({ ...v, [detection.id]: event.target.value }))}
+                        className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2 md:col-span-2">
+                      <Button size="sm" disabled={busyId !== ''} onClick={() => decide(upload.id, detection, 'confirm')}>
+                        Confirm SKU and add quantity
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busyId !== ''} onClick={() => decide(upload.id, detection, 'reject')}>
+                        Reject detection
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </div>
             ))}
