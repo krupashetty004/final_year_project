@@ -90,7 +90,13 @@ def train_detector(
     if device:
         train_kwargs["device"] = device
     train_result = model.train(**train_kwargs)
-    save_dir = Path(getattr(train_result, "save_dir", project / run_name))
+    trainer = getattr(model, "trainer", None)
+    save_dir_value = (
+        getattr(trainer, "save_dir", None)
+        or getattr(train_result, "save_dir", None)
+        or (project / run_name)
+    )
+    save_dir = Path(save_dir_value)
     best_weights = save_dir / "weights" / "best.pt"
     if not best_weights.is_file():
         raise FileNotFoundError(
