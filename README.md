@@ -37,20 +37,21 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 ### Implemented in this branch
 
 - Deterministic rule-based pricing engine.
-- Recent verified competitor-price median (observations within 30 days and 2 km).
-- Near-expiry markdown tiers and an excess-stock pressure adjustment.
-- Whole-rupee recommendations with safeguards for MRP, minimum margin (unless clearance is explicitly enabled), a maximum 10% movement from the current price, and one approved price change per SKU per day.
-- Owner accept/edit/reject workflow.
-- Approved price changes update inventory, price history and owner-approval records.
+- Competitor comparison uses only the latest **non-synthetic, verified price per verified peer store and SKU**, within 2 km and the previous 30 days. Repeated observations from one peer cannot overweight the median; unverified, synthetic, stale, future, distant and same-store observations are excluded.
+- A transparent real-sales demand-trend signal compares the latest 7 days with the preceding 28-day sales baseline. Ratios of at least 1.25 produce a +3% signal, ratios at or below 0.75 produce a -3% signal, and intermediate/insufficient history remains neutral. Synthetic sales are excluded.
+- Near-expiry markdown tiers and a bounded excess-stock pressure adjustment.
+- Whole-rupee recommendations with MRP and gross-margin-on-selling-price safeguards (unless clearance is explicitly enabled), plus a maximum +/-10% movement for any actual daily price change.
+- One actual price change per SKU per India-local calendar day. The same guardrail is shared by pricing-agent approvals, manual inventory edits and shelf-photo review price edits. No-op approvals do not consume the daily change allowance.
+- Owner accept/edit/reject workflow. Every approved price change updates inventory, price history and owner-approval records.
 - Generating a recommendation does not change a selling price automatically.
 - No customer-level/personalized pricing.
 
 ### Still incomplete for O2
 
-- No learned price-elasticity model or causal demand-response estimation.
-- No validated sell-through uplift, revenue/margin uplift or markdown effectiveness evaluation.
-- Demand-based price signals are not yet learned from historical price/quantity experiments. Current decisions are transparent business rules, not a trained pricing model.
-- Competitor observations are synthetic in the demo dataset and must not be treated as live market prices.
+- No learned price-elasticity model, causal demand-response estimation or controlled price/quantity experiment analysis. The current 7d/28d signal is a transparent trend heuristic, not price elasticity.
+- No validated sell-through uplift, revenue/margin uplift or markdown-effectiveness evaluation.
+- No live competitor collection or external market-data integration is included. Demo synthetic competitor observations are excluded from the real-peer comparison and pricing recommendation path; verified real observations must be supplied by an independent trusted process.
+- The heuristic thresholds and markdown tiers have not yet been calibrated against held-out store-level revenue and margin outcomes.
 
 ## Architecture
 
