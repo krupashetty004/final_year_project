@@ -176,8 +176,12 @@ def embed_image_bytes(image_bytes: bytes) -> tuple[list[float], str]:
     return _embed_pil_image(image)
 
 
-def analyze_image(image_bytes: bytes, catalogue: list[dict[str, Any]]) -> dict[str, Any]:
-    """Detect generic object regions, then match with CLIP references or OCR."""
+def analyze_image(
+    image_bytes: bytes,
+    catalogue: list[dict[str, Any]],
+    use_visual_embeddings: bool = False,
+) -> dict[str, Any]:
+    """Detect generic object regions and return crop vectors for pgvector lookup."""
     import numpy as np
 
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
@@ -186,7 +190,7 @@ def analyze_image(image_bytes: bytes, catalogue: list[dict[str, Any]]) -> dict[s
         raise ValueError("Image dimensions are outside supported limits")
     detector = _detector()
     reader = _ocr_reader()
-    has_visual_references = any(item.get("reference_embeddings") for item in catalogue)
+    has_visual_references = bool(use_visual_embeddings)
     result = detector.predict(source=image, conf=0.25, verbose=False)[0]
     detections = []
     embedding_model = os.getenv("VISION_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
@@ -200,21 +204,17 @@ def analyze_image(image_bytes: bytes, catalogue: list[dict[str, Any]]) -> dict[s
         texts = reader.readtext(np.asarray(crop), detail=0, paragraph=False)
         ocr_text = " ".join(str(t) for t in texts).strip()
 
+        image_embedding = None
         if has_visual_references:
-            query_embedding, embedding_model = _embed_pil_image(crop)
-            matches = rank_visual_matches(query_embedding, catalogue)
-            matching_method = "clip_image_embedding"
-            if not matches:
-                matches = match_catalogue(ocr_text, catalogue)
-                if matches:
-                    matching_method = "ocr_text_fallback"
+            image_embedding, embedding_model = _embed_pil_image(crop)
+            matching_method = "clip_embedding_pending_pgvector"
         else:
-            matches = match_catalogue(ocr_text, catalogue)
             matching_method = "ocr_text_similarity"
+        matches = match_catalogue(ocr_text, catalogue)
 
         class_id = int(box.cls[0].item())
         label = result.names.get(class_id, str(class_id))
-        detections.append({
+        detection = {
             "bbox": [
                 round(x1i / width, 5), round(y1i / height, 5),
                 round(x2i / width, 5), round(y2i / height, 5),
@@ -226,12 +226,17 @@ def analyze_image(image_bytes: bytes, catalogue: list[dict[str, Any]]) -> dict[s
             "is_unknown": not bool(matches),
             "matching_method": matching_method,
             "quantity_requires_owner_confirmation": True,
-        })
+        }
+        if image_embedding is not None:
+            # Internal API-to-API payload; the retail API consumes this vector
+            # against PostgreSQL pgvector and removes it before returning JSON.
+            detection["image_embedding"] = image_embedding
+        detections.append(detection)
     return {
         "detector": os.getenv("VISION_DETECTOR_WEIGHTS", "yolo11n.pt"),
         "detections": detections,
         "detection_count": len(detections),
-        "matching_method": "clip_image_embedding" if has_visual_references else "ocr_text_similarity",
+        "matching_method": "clip_embedding_pending_pgvector" if has_visual_references else "ocr_text_similarity",
         "embedding_model": embedding_model,
         "embedding_matching_enabled": has_visual_references,
         "stock_quantity_inferred": False,
