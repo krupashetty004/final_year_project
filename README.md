@@ -14,7 +14,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - Shelf-photo upload endpoint (JPEG/PNG/WebP, maximum 10 MB) with local file persistence.
 - Generic YOLO11 object-region detection and crop-level EasyOCR.
 - Owner-uploaded real SKU reference photos are embedded with openai/clip-vit-base-patch32 (512-D, L2-normalized) and stored in the existing PostgreSQL pgvector column.
-- Detected image crops are ranked against the selected store's and global SKU reference vectors using cosine similarity; OCR text matching is the fallback when references are absent or do not clear the preliminary similarity threshold.
+- Detected image crops are embedded by CLIP, then the API retrieves the nearest SKU references directly from PostgreSQL/pgvector using cosine distance; OCR text matching is the fallback when references are absent or do not clear the preliminary similarity threshold.
 - Unknown detections remain unassigned; they are not automatically forced to a SKU.
 - Owner review UI can select/correct a SKU, confirm or reject a detection, enter the physically counted quantity, and optionally enter an expiry date and selling price.
 - Only owner-confirmed quantities change inventory. Confirm/reject decisions are recorded in owner approvals.
