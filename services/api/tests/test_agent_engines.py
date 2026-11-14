@@ -138,3 +138,77 @@ def test_croston_tsb_rejects_invalid_smoothing_parameters():
         forecast_demand([0, 1, 0, 2], model="croston_tsb", alpha=0)
     with pytest.raises(ValueError):
         forecast_demand([0, 1, 0, 2], model="croston_tsb", beta=1.1)
+
+
+
+@pytest.mark.parametrize(
+    ("days_to_expiry", "expected_discount"),
+    [(3, 15.0), (4, 8.0), (8, 3.0), (15, 0.0)],
+)
+def test_expiry_markdown_tiers(days_to_expiry, expected_discount):
+    result = recommend_price(PricingInputs(
+        current_price_paise=10000,
+        mrp_paise=12000,
+        cost_price_paise=5000,
+        days_to_expiry=days_to_expiry,
+    ))
+    assert result["expiry_discount_pct"] == expected_discount
+    assert result["recommended_price_paise"] <= 10000
+
+
+def test_competitor_price_signal_respects_margin_and_daily_movement_limits():
+    result = recommend_price(PricingInputs(
+        current_price_paise=10000,
+        mrp_paise=15000,
+        cost_price_paise=8500,
+        min_margin_bps=1000,
+        nearby_median_price_paise=20000,
+    ))
+    assert 9350 <= result["recommended_price_paise"] <= 11000
+    assert result["recommended_price_paise"] % 100 == 0
+
+
+def test_competitor_discount_cannot_break_minimum_margin_floor():
+    result = recommend_price(PricingInputs(
+        current_price_paise=10000,
+        mrp_paise=12000,
+        cost_price_paise=9500,
+        min_margin_bps=1000,
+        nearby_median_price_paise=5000,
+    ))
+    assert result["recommended_price_paise"] == 10450
+    assert result["expected_margin_bps"] >= 1000
+
+
+def test_excess_stock_pressure_only_applies_bounded_markdown():
+    neutral = recommend_price(PricingInputs(
+        current_price_paise=10000, mrp_paise=12000, cost_price_paise=5000,
+    ))
+    pressured = recommend_price(PricingInputs(
+        current_price_paise=10000, mrp_paise=12000, cost_price_paise=5000,
+        stock_pressure_factor=3.0,
+    ))
+    assert neutral["recommended_price_paise"] == 10000
+    assert pressured["recommended_price_paise"] == 9000
+    assert pressured["recommended_price_paise"] < neutral["recommended_price_paise"]
+
+
+def test_demand_signal_is_considered_without_bypassing_price_guardrails():
+    result = recommend_price(PricingInputs(
+        current_price_paise=10000,
+        mrp_paise=15000,
+        cost_price_paise=5000,
+        demand_signal_price_paise=14000,
+    ))
+    assert result["recommended_price_paise"] == 11000
+    assert "Demand signal considered" in result["explanation"]
+
+
+def test_pricing_rejects_non_positive_stock_pressure():
+    with pytest.raises(ValueError):
+        recommend_price(PricingInputs(
+            current_price_paise=10000,
+            mrp_paise=12000,
+            cost_price_paise=5000,
+            stock_pressure_factor=0,
+        ))
