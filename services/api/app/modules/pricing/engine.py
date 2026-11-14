@@ -7,7 +7,7 @@ separately validated model task.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, floor
+from math import ceil, floor, isfinite
 from typing import Optional
 
 
@@ -44,6 +44,63 @@ def minimum_selling_price_paise(
     ) // denominator
     whole_rupee_floor = ((raw_floor_paise + 99) // 100) * 100
     return max(100, whole_rupee_floor)
+
+
+def derive_demand_price_signal(
+    current_price_paise: int,
+    recent_7d_units: float,
+    previous_28d_units: float,
+) -> dict:
+    """Create a small transparent price signal from real recent sales velocity.
+
+    Recent 7-day units are compared with the expected 7-day units implied by
+    the preceding 28 days. A ratio >=1.25 suggests +3%; <=0.75 suggests -3%.
+    Intermediate ratios are neutral. This is a demand-trend heuristic, not
+    price elasticity or a causal demand-response model.
+    """
+    if current_price_paise <= 0:
+        raise ValueError("Current selling price must be positive")
+    recent = float(recent_7d_units)
+    previous = float(previous_28d_units)
+    if not isfinite(recent) or not isfinite(previous) or recent < 0 or previous < 0:
+        raise ValueError("Sales quantities must be finite and non-negative")
+    if previous == 0:
+        return {
+            "direction": "insufficient_baseline",
+            "ratio": None,
+            "signal_price_paise": None,
+            "explanation": "No sales in the previous 28 days; no demand price signal applied.",
+        }
+
+    expected_7d = previous / 4.0
+    ratio = recent / expected_7d if expected_7d > 0 else None
+    if ratio is not None and ratio >= 1.25:
+        signal_price = floor(current_price_paise * 1.03 / 100) * 100
+        direction = "high_demand"
+        explanation = (
+            f"Recent 7-day sales were {ratio:.2f}x the prior 28-day daily baseline; "
+            "a +3% demand-trend signal was considered."
+        )
+    elif ratio is not None and ratio <= 0.75:
+        signal_price = floor(current_price_paise * 0.97 / 100) * 100
+        direction = "low_demand"
+        explanation = (
+            f"Recent 7-day sales were {ratio:.2f}x the prior 28-day daily baseline; "
+            "a -3% demand-trend signal was considered."
+        )
+    else:
+        signal_price = None
+        direction = "neutral"
+        explanation = (
+            f"Recent 7-day sales were {ratio:.2f}x the prior 28-day daily baseline; "
+            "no demand price adjustment was indicated."
+        )
+    return {
+        "direction": direction,
+        "ratio": round(ratio, 4) if ratio is not None else None,
+        "signal_price_paise": signal_price,
+        "explanation": explanation,
+    }
 
 
 def recommend_price(data: PricingInputs) -> dict:
