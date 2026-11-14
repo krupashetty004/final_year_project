@@ -158,6 +158,8 @@ def generate_pricing_recommendations(
     now = datetime.now(timezone.utc)
     generated = []
     skipped = 0
+    competitor_rows = _eligible_competitor_rows(db, store_id, now)
+    price_by_product = _latest_price_per_peer(competitor_rows)
     for item in items:
         pending_id = db.scalar(select(PricingRecommendation.id).where(
             PricingRecommendation.store_id == store_id,
@@ -167,9 +169,6 @@ def generate_pricing_recommendations(
         if pending_id:
             skipped += 1
             continue
-        if "price_by_product" not in locals():
-            peer_rows = _eligible_competitor_rows(db, store_id, now)
-            price_by_product = _latest_price_per_peer(peer_rows)
         peer_prices = sorted(price_by_product.get(item.product_id, {}).values())
         median = None
         if peer_prices:
