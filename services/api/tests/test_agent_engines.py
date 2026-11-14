@@ -1,6 +1,6 @@
 import pytest
 
-from app.modules.forecasting.engine import calculate_reorder, forecast_demand
+from app.modules.forecasting.engine import calculate_reorder, forecast_demand, rolling_origin_backtest
 from app.modules.pricing.engine import PricingInputs, recommend_price
 
 
@@ -63,3 +63,39 @@ def test_infeasible_margin_and_daily_limit_is_rejected():
             current_price_paise=10000, mrp_paise=12000, cost_price_paise=10100,
             min_margin_bps=1000,
         ))
+
+
+
+def test_rolling_origin_backtest_compares_both_baselines():
+    result = rolling_origin_backtest(
+        [5.0] * 70,
+        horizon_days=7,
+        min_train_days=28,
+        step_days=7,
+    )
+    assert result["status"] == "evaluated"
+    assert result["origin_count"] == 6
+    assert set(result["models"]) == {"moving_average", "seasonal_naive"}
+    for metrics in result["models"].values():
+        assert metrics["origin_count"] == 6
+        assert metrics["mae_horizon_units"] == 0
+        assert metrics["wape_pct"] == 0
+        assert metrics["bias_pct"] == 0
+
+
+def test_rolling_origin_backtest_reports_insufficient_history():
+    result = rolling_origin_backtest(
+        [2.0] * 34,
+        horizon_days=7,
+        min_train_days=28,
+    )
+    assert result["status"] == "insufficient_history"
+    assert result["origin_count"] == 0
+    assert result["required_history_days"] == 35
+
+
+def test_rolling_origin_backtest_rejects_invalid_inputs():
+    with pytest.raises(ValueError):
+        rolling_origin_backtest([1.0] * 40, min_train_days=6)
+    with pytest.raises(ValueError):
+        rolling_origin_backtest([1.0, float("nan")] + [1.0] * 38)
