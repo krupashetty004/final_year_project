@@ -21,6 +21,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - Moving-average, seven-day seasonal-naive and Croston-TSB intermittent-demand baselines.
 - Expanding-window rolling-origin evaluation for all three baselines, reporting horizon-level MAE, WAPE and forecast bias.
 - Reorder-point calculation using lead-time demand plus safety stock, with supplier pack-size rounding.
+- Reorder suggestions support moving-average, seasonal-naive, Croston-TSB or per-SKU auto-selection by rolling-origin WAPE. Auto-selection requires at least three evaluation windows and falls back to moving average when evidence is insufficient.
 - Reorder suggestions support owner accept/edit/reject. Approval does not automatically place a purchase order.
 
 ### Still incomplete for O1
