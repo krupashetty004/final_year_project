@@ -240,6 +240,68 @@ def test_owner_can_generate_reorders_with_croston_tsb(owner_client):
     assert response.status_code == 200, response.text
     assert response.json()["forecast_model"] == "croston_tsb"
 
+
+def test_pricing_comparison_filters_demo_and_old_peer_rows(owner_client):
+    from datetime import datetime, timedelta, timezone
+    from decimal import Decimal
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.database.session import SessionLocal
+    from app.models.entities import CompetitorPrice, Store, StoreInventory
+
+    client, headers = owner_client
+    store_id_text = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    store_id = UUID(store_id_text)
+    with SessionLocal() as db:
+        product_id = db.scalar(
+            select(StoreInventory.product_id).where(StoreInventory.store_id == store_id).limit(1)
+        )
+        peers = db.scalars(
+            select(Store).where(Store.id != store_id, Store.is_verified.is_(True))
+            .order_by(Store.store_code).limit(2)
+        ).all()
+        assert product_id is not None and len(peers) == 2
+        now = datetime.now(timezone.utc)
+        db.add_all([
+            CompetitorPrice(
+                product_id=product_id, competitor_store_id=peers[0].id,
+                observed_at_utc=now - timedelta(days=5), selling_price_paise=10000,
+                distance_km=Decimal("1"), is_verified=True, is_synthetic=False,
+            ),
+            CompetitorPrice(
+                product_id=product_id, competitor_store_id=peers[0].id,
+                observed_at_utc=now - timedelta(days=2), selling_price_paise=11000,
+                distance_km=Decimal("1"), is_verified=True, is_synthetic=False,
+            ),
+            CompetitorPrice(
+                product_id=product_id, competitor_store_id=peers[1].id,
+                observed_at_utc=now - timedelta(days=1), selling_price_paise=12000,
+                distance_km=Decimal("1.5"), is_verified=True, is_synthetic=False,
+            ),
+            CompetitorPrice(
+                product_id=product_id, competitor_store_id=peers[1].id,
+                observed_at_utc=now, selling_price_paise=1000,
+                distance_km=Decimal("1"), is_verified=True, is_synthetic=True,
+            ),
+            CompetitorPrice(
+                product_id=product_id, competitor_store_id=peers[0].id,
+                observed_at_utc=now, selling_price_paise=500,
+                distance_km=Decimal("3"), is_verified=True, is_synthetic=False,
+            ),
+        ])
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/pricing/stores/{store_id_text}/competitor-comparison",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    row = next(item for item in response.json()["comparisons"] if item["product_id"] == str(product_id))
+    assert row["nearby_verified_stores"] == 2
+    assert row["nearby_median_paise"] == 11500
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
