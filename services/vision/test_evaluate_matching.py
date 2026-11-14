@@ -119,3 +119,39 @@ def test_loader_rejects_empty_dataset(tmp_path):
     dataset.write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no samples"):
         _load_jsonl(dataset)
+
+
+
+def test_evaluation_reports_top3_recall_and_reciprocal_rank():
+    samples = [{
+        "query_id": "rank-two",
+        "expected_product_id": "sku-b",
+        "query_embedding": _vector(1.0, 0.0),
+        "catalogue": [
+            {
+                "product_id": "sku-a",
+                "sku_code": "A",
+                "name": "Product A",
+                "brand": "Brand A",
+                "reference_embeddings": [_vector(1.0, 0.0)],
+            },
+            {
+                "product_id": "sku-b",
+                "sku_code": "B",
+                "name": "Product B",
+                "brand": "Brand B",
+                "reference_embeddings": [_vector(0.8, 0.6)],
+            },
+            {
+                "product_id": "sku-c",
+                "sku_code": "C",
+                "name": "Product C",
+                "brand": "Brand C",
+                "reference_embeddings": [_vector(-1.0, 0.0)],
+            },
+        ],
+    }]
+    report = evaluate_samples(samples, thresholds=[0.58])
+    assert report["known_top1_accuracy_before_threshold"] == 0.0
+    assert report["known_top3_recall_before_threshold"] == 1.0
+    assert report["known_mean_reciprocal_rank_at_3"] == 0.5
