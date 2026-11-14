@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+
+# Python test/runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Local inventory shelf images
+services/api/uploads/
