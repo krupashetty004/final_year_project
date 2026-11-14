@@ -299,17 +299,35 @@ export const ReferenceImagesPage: React.FC = () => {
 
 export const DemandForecastingPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
-  const { data } = useQuery({
+  const [selectedProductId, setSelectedProductId] = React.useState('');
+  const [model, setModel] = React.useState<'moving_average' | 'seasonal_naive'>('moving_average');
+  const { data: products = [] } = useQuery({
+    queryKey: ['forecast-catalogue'],
+    queryFn: () => apiFetch<Array<{ id: string; sku_code: string; name: string }>>(
+      '/inventory/products?limit=2000',
+    ),
+  });
+  const productId = selectedProductId || products[0]?.id || '';
+  const { data: history } = useQuery({
     queryKey: ['sales-history-180', activeStoreId],
     queryFn: () =>
       apiFetch<{
         days: number;
         series: Array<{ date: string; units_sold: number; revenue_paise: number; festival_tag: string | null }>;
-      >(`/forecasting/stores/${activeStoreId}/sales-history`),
+      }>(`/forecasting/stores/${activeStoreId}/sales-history`),
     enabled: Boolean(activeStoreId),
   });
+  const { data: forecast, isLoading: forecastLoading, error: forecastError } = useQuery({
+    queryKey: ['sku-forecast', activeStoreId, productId, model],
+    queryFn: () => apiFetch<{
+      model_name: string; predicted_qty: number; daily_mean: number;
+      lower_bound_qty: number; upper_bound_qty: number; horizon_days: number;
+      history_days: number; data_quality: string;
+    }>(`/forecasting/stores/${activeStoreId}/products/${productId}/forecast?horizon_days=7&model=${model}`),
+    enabled: Boolean(activeStoreId && productId),
+  });
 
-  const chartData = (data?.series ?? []).map((s) => ({
+  const chartData = (history?.series ?? []).map((s) => ({
     date: s.date.slice(5),
     units: s.units_sold,
     festival: s.festival_tag,
@@ -318,13 +336,69 @@ export const DemandForecastingPage: React.FC = () => {
   return (
     <div className="space-y-5">
       <StageNotice
-        stage="Stage 1 Seeded Sales History · Stage 4 Forecasting Pipeline"
-        summary="The historical chart shows recorded store sales. Per-SKU forecasts use an available moving-average or seven-day seasonal-naive baseline; advanced model selection and rolling backtests are pending."
+        stage="Stage 4 · Sales history and SKU demand baseline"
+        summary="The historical chart shows recorded store sales. Per-SKU forecasts use a moving-average or seven-day seasonal-naive baseline. Croston-TSB, LightGBM, model selection and rolling backtests are not enabled yet."
       />
       <Card>
         <CardHeader>
           <h3 className="font-display text-sm font-semibold text-slate-900">
-            6-Month Daily Units Sold ({data?.days ?? 0} days · Synthetic Dataset)
+            7-day demand forecast
+          </h3>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Product SKU
+              <select
+                value={productId}
+                onChange={(event) => setSelectedProductId(event.target.value)}
+                className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+              >
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>{product.sku_code} · {product.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-slate-600">
+              Forecast baseline
+              <select
+                value={model}
+                onChange={(event) => setModel(event.target.value as 'moving_average' | 'seasonal_naive')}
+                className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
+              >
+                <option value="moving_average">Moving average</option>
+                <option value="seasonal_naive">7-day seasonal naive</option>
+              </select>
+            </label>
+          </div>
+          {forecastLoading && <p className="text-xs text-slate-500">Calculating forecast…</p>}
+          {forecastError && <p className="text-xs text-amber-700">{forecastError instanceof Error ? forecastError.message : 'Forecast unavailable for this SKU'}</p>}
+          {forecast && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">7-day expected demand</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">{formatQty(forecast.predicted_qty, '')}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Daily average</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">{formatQty(forecast.daily_mean, '')}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Forecast interval</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{formatQty(forecast.lower_bound_qty, '')}–{formatQty(forecast.upper_bound_qty, '')}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Baseline / history</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{forecast.model_name} · {forecast.history_days} days</p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <h3 className="font-display text-sm font-semibold text-slate-900">
+            Daily store sales ({history?.days ?? 0} observed dates · 180-day window)
           </h3>
         </CardHeader>
         <CardContent className="h-80">
