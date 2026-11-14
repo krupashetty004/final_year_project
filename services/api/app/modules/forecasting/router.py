@@ -105,10 +105,12 @@ def get_forecast_backtest(
     horizon_days: int = Query(default=7, ge=1, le=30),
     min_train_days: int = Query(default=28, ge=7, le=120),
     step_days: int = Query(default=7, ge=1, le=30),
+    include_synthetic: bool = Query(default=False),
     owner: User = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Evaluate both deterministic demand baselines on historical rolling origins."""
+    """Evaluate forecast baselines on real sales by default; synthetic rows are opt-in."""
+
     require_owned_store(str(store_id), owner, db)
     exists = db.scalar(select(StoreInventory.id).where(
         StoreInventory.store_id == store_id,
@@ -118,16 +120,25 @@ def get_forecast_backtest(
         raise HTTPException(status_code=404, detail="Inventory item not found for this store")
 
     since = datetime.now(timezone.utc) - timedelta(days=180)
-    rows = db.execute(
-        select(Sale.sold_at_utc, Sale.quantity, Sale.is_synthetic).where(
-            Sale.store_id == store_id,
-            Sale.product_id == product_id,
-            Sale.sold_at_utc >= since,
-        ).order_by(Sale.sold_at_utc)
-    ).all()
+    sales_query = select(
+        Sale.sold_at_utc, Sale.quantity, Sale.is_synthetic
+    ).where(
+        Sale.store_id == store_id,
+        Sale.product_id == product_id,
+        Sale.sold_at_utc >= since,
+    )
+    if not include_synthetic:
+        sales_query = sales_query.where(Sale.is_synthetic.is_(False))
+    rows = db.execute(sales_query.order_by(Sale.sold_at_utc)).all()
     daily = _daily_series(rows)
     if not rows or not any(daily):
-        raise HTTPException(status_code=422, detail="No sales history available for backtesting")
+        detail = (
+            "No sales history available for backtesting."
+            if include_synthetic
+            else "No real sales history available. Synthetic demo rows are excluded by default; "
+                 "set include_synthetic=true only for development checks."
+        )
+        raise HTTPException(status_code=422, detail=detail)
 
     result = rolling_origin_backtest(
         daily,
@@ -139,9 +150,10 @@ def get_forecast_backtest(
         "store_id": str(store_id),
         "product_id": str(product_id),
         "history_days": len(daily),
+        "include_synthetic": include_synthetic,
         "data_quality": (
             "synthetic_history_included" if any(bool(row[2]) for row in rows)
-            else "historical_sales"
+            else "real_sales_only"
         ),
         **result,
     }
