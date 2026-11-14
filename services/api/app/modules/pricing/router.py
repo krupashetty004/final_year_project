@@ -12,9 +12,14 @@ from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
 from app.models.entities import (
     CompetitorPrice, OwnerApproval, PriceHistory, PricingRecommendation, Product,
-    StockBatch, Store, StoreInventory, User,
+    Sale, StockBatch, Store, StoreInventory, User,
 )
-from app.modules.pricing.engine import PricingInputs, minimum_selling_price_paise, recommend_price
+from app.modules.pricing.engine import (
+    PricingInputs,
+    derive_demand_price_signal,
+    minimum_selling_price_paise,
+    recommend_price,
+)
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
@@ -82,7 +87,12 @@ def pricing_module_status() -> dict:
     return {
         "module": "smart_pricing",
         "stage": "rule_based_recommendations_with_owner_approval",
-        "signals": ["verified competitor median", "near-expiry markdown", "excess-stock pressure"],
+        "signals": [
+            "latest real verified competitor price per peer within 2 km and 30 days",
+            "7-day versus previous 28-day real-sales trend heuristic",
+            "near-expiry markdown",
+            "excess-stock pressure",
+        ],
         "not_yet_enabled": ["learned price elasticity", "validated demand-response model", "sell-through uplift calibration"],
         "guardrails": [
             "selling_price <= mrp", "minimum margin except explicitly enabled clearance",
@@ -160,6 +170,28 @@ def generate_pricing_recommendations(
     skipped = 0
     competitor_rows = _eligible_competitor_rows(db, store_id, now)
     price_by_product = _latest_price_per_peer(competitor_rows)
+
+    # Use only real (non-synthetic) sales. Compare the last seven days with
+    # the 28-day baseline immediately before that window.
+    recent_window_start = now - timedelta(days=7)
+    baseline_window_start = now - timedelta(days=35)
+    sales_rows = db.execute(
+        select(Sale.product_id, Sale.sold_at_utc, Sale.quantity).where(
+            Sale.store_id == store_id,
+            Sale.is_synthetic.is_(False),
+            Sale.sold_at_utc >= baseline_window_start,
+            Sale.sold_at_utc <= now,
+        )
+    ).all()
+    demand_totals: dict[UUID, list[float]] = {}
+    for sold_product_id, sold_at, quantity in sales_rows:
+        totals = demand_totals.setdefault(sold_product_id, [0.0, 0.0])
+        if sold_at >= recent_window_start:
+            totals[0] += float(quantity)
+        else:
+            totals[1] += float(quantity)
+
+    demand_signal_count = 0
     for item in items:
         pending_id = db.scalar(select(PricingRecommendation.id).where(
             PricingRecommendation.store_id == store_id,
@@ -193,6 +225,14 @@ def generate_pricing_recommendations(
         )
         if item.reorder_point_qty and net_stock > item.reorder_point_qty * Decimal("1.5"):
             stock_pressure = min(3.0, float(net_stock / item.reorder_point_qty))
+        demand_totals_for_item = demand_totals.get(item.product_id, [0.0, 0.0])
+        demand_signal = derive_demand_price_signal(
+            item.selling_price_paise,
+            demand_totals_for_item[0],
+            demand_totals_for_item[1],
+        )
+        if demand_signal["signal_price_paise"] is not None:
+            demand_signal_count += 1
         try:
             result = recommend_price(PricingInputs(
                 current_price_paise=item.selling_price_paise,
@@ -200,6 +240,7 @@ def generate_pricing_recommendations(
                 cost_price_paise=item.cost_price_paise,
                 min_margin_bps=item.min_margin_bps,
                 nearby_median_price_paise=median,
+                demand_signal_price_paise=demand_signal["signal_price_paise"],
                 days_to_expiry=days_expiry,
                 stock_pressure_factor=stock_pressure,
                 clearance_allowed=bool(item.clearance_enabled and store.clearance_below_margin_allowed),
@@ -217,7 +258,8 @@ def generate_pricing_recommendations(
             stock_pressure_factor=stock_pressure,
             recommended_price_paise=result["recommended_price_paise"],
             expected_margin_bps=result["expected_margin_bps"],
-            explanation=result["explanation"], constraints_passed=result["constraints_passed"],
+            explanation=result["explanation"] + " " + demand_signal["explanation"],
+            constraints_passed=result["constraints_passed"],
             status="pending",
         )
         db.add(rec)
@@ -225,6 +267,8 @@ def generate_pricing_recommendations(
     db.commit()
     return {
         "store_id": str(store_id), "created_count": len(generated), "skipped_count": skipped,
+        "demand_signal_count": demand_signal_count,
+        "sales_signal_data_source": "non_synthetic_sales_only",
         "recommendations": [
             {"id": str(r.id), "product_id": str(r.product_id),
              "current_price_paise": r.current_price_paise,
