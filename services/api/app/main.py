@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.database.session import get_db
+from app.modules.auth.router import router as auth_router
 from app.modules.forecasting.router import router as forecasting_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.pricing.router import router as pricing_router
@@ -27,6 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(inventory_router, prefix="/api/v1")
 app.include_router(forecasting_router, prefix="/api/v1")
 app.include_router(pricing_router, prefix="/api/v1")
