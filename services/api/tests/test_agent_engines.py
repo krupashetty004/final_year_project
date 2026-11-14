@@ -1,0 +1,65 @@
+import pytest
+
+from app.modules.forecasting.engine import calculate_reorder, forecast_demand
+from app.modules.pricing.engine import PricingInputs, recommend_price
+
+
+def test_moving_average_forecast_is_non_negative():
+    result = forecast_demand([1, 2, 3, 4, 5], horizon_days=7)
+    assert result.predicted_qty == 21
+    assert result.lower_bound_qty >= 0
+    assert result.upper_bound_qty >= result.predicted_qty
+
+
+def test_forecast_rejects_invalid_history():
+    with pytest.raises(ValueError):
+        forecast_demand([-1, 2])
+    with pytest.raises(ValueError):
+        forecast_demand([])
+
+
+def test_reorder_rounds_to_supplier_pack():
+    result = calculate_reorder(5, 1, 4, 6, 2, 10)
+    assert result["rounded_suggested_qty"] % 10 == 0
+    assert result["rounded_suggested_qty"] >= result["raw_suggested_qty"]
+
+
+def test_reorder_does_not_suggest_negative_quantity():
+    result = calculate_reorder(1, 0, 2, 100, 0, 5)
+    assert result["rounded_suggested_qty"] == 0
+
+
+def test_price_never_exceeds_mrp_or_violates_margin():
+    result = recommend_price(PricingInputs(
+        current_price_paise=10000, mrp_paise=12000, cost_price_paise=7000,
+        min_margin_bps=1000, nearby_median_price_paise=9000,
+    ))
+    assert result["recommended_price_paise"] <= 12000
+    assert result["recommended_price_paise"] >= 7700
+    assert result["recommended_price_paise"] % 100 == 0
+    assert result["constraints_passed"]
+
+
+def test_expiry_discount_is_applied():
+    result = recommend_price(PricingInputs(
+        current_price_paise=10000, mrp_paise=12000, cost_price_paise=5000,
+        days_to_expiry=2,
+    ))
+    assert result["expiry_discount_pct"] == 15
+    assert result["recommended_price_paise"] < 10000
+
+
+def test_expired_product_is_not_priced():
+    with pytest.raises(ValueError):
+        recommend_price(PricingInputs(
+            current_price_paise=10000, mrp_paise=12000, cost_price_paise=5000,
+            days_to_expiry=0,
+        ))
+
+
+def test_infeasible_margin_and_daily_limit_is_rejected():
+    with pytest.raises(ValueError):
+        recommend_price(PricingInputs(
+            current_price_paise=10000, mrp_paise=12000, cost_price_paise=9900,
+            min_margin_bps=1000,
+        ))
