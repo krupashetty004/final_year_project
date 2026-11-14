@@ -28,12 +28,16 @@ def forecast_demand(
     horizon_days: int = 7,
     model: str = "moving_average",
     window: int = 28,
+    alpha: float = 0.1,
+    beta: float = 0.1,
 ) -> Forecast:
-    """Forecast non-negative daily demand using moving-average or seasonal-naive."""
+    """Forecast daily demand using moving-average, seasonal-naive or Croston-TSB."""
     if horizon_days < 1 or horizon_days > 90:
         raise ValueError("horizon_days must be between 1 and 90")
     if window < 1:
         raise ValueError("window must be at least 1")
+    if not 0 < alpha <= 1 or not 0 < beta <= 1:
+        raise ValueError("Croston-TSB alpha and beta must be in (0, 1]")
     if not daily_quantities:
         raise ValueError("At least one historical daily quantity is required")
     values = [float(v) for v in daily_quantities]
@@ -50,8 +54,22 @@ def forecast_demand(
         sample = values[-7:] if len(values) >= 7 else values
         daily_mean = mean(sample)
         sigma = pstdev(sample) if len(sample) > 1 else 0.0
+    elif model == "croston_tsb":
+        non_zero = [value for value in values if value > 0]
+        sigma = pstdev(values) if len(values) > 1 else 0.0
+        if non_zero:
+            demand_size = mean(non_zero)
+            occurrence_probability = len(non_zero) / len(values)
+            for value in values:
+                occurrence = 1.0 if value > 0 else 0.0
+                occurrence_probability += beta * (occurrence - occurrence_probability)
+                if value > 0:
+                    demand_size += alpha * (value - demand_size)
+            daily_mean = occurrence_probability * demand_size
+        else:
+            daily_mean = 0.0
     else:
-        raise ValueError("model must be moving_average or seasonal_naive")
+        raise ValueError("model must be moving_average, seasonal_naive or croston_tsb")
     predicted = (
         sum(sample[i % len(sample)] for i in range(horizon_days))
         if model == "seasonal_naive"
@@ -108,7 +126,7 @@ def rolling_origin_backtest(
 
     origins = range(min_train_days, len(values) - horizon_days + 1, step_days)
     results: dict[str, dict] = {}
-    for model in ("moving_average", "seasonal_naive"):
+    for model in ("moving_average", "seasonal_naive", "croston_tsb"):
         errors: list[float] = []
         signed_errors: list[float] = []
         actual_total = 0.0
