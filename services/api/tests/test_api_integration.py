@@ -162,6 +162,21 @@ def test_owner_reference_upload_stores_512d_embedding(owner_client, monkeypatch)
     assert listed.status_code == 200, listed.text
     assert any(item["id"] == response.json()["id"] and item["embedded"] for item in listed.json()["references"])
 
+    from uuid import UUID
+
+    from app.database.session import SessionLocal
+    from app.modules.inventory.router import _match_product_reference_vectors
+
+    with SessionLocal() as db:
+        matches = _match_product_reference_vectors(
+            db,
+            UUID(store_id),
+            [1.0] + [0.0] * 511,
+        )
+    assert matches
+    assert matches[0]["product_id"] == product["id"]
+    assert matches[0]["score_type"] == "cosine_similarity"
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
