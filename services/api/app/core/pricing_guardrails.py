@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from math import ceil, floor
 from zoneinfo import ZoneInfo
 
 
@@ -28,8 +27,9 @@ def validate_daily_price_change(
     if proposed == current:
         return
 
-    lower = ceil(current * 0.90 / 100) * 100
-    upper = floor(current * 1.10 / 100) * 100
+    # Integer arithmetic avoids floating-point boundary drift in paise.
+    lower = ((current * 9 + 999) // 1000) * 100
+    upper = (current * 11 // 1000) * 100
     if not lower <= proposed <= upper:
         raise ValueError("Price change exceeds the +/-10% movement guardrail")
 
