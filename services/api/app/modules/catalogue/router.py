@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.security import get_current_owner
 from app.database.session import get_db
-from app.models.entities import Product
+from app.models.entities import Product, User
 from app.schemas.common import ProductRead
 
 router = APIRouter(prefix="/products", tags=["product catalogue"])
@@ -74,6 +75,7 @@ def list_catalogue(
 @router.post("", response_model=ProductRead, status_code=201)
 def create_catalogue_product(
     body: ProductCreateBody,
+    owner: User = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ) -> Product:
     if body.default_cost_paise > body.mrp_paise:
