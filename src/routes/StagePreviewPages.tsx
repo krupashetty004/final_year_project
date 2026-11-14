@@ -799,7 +799,7 @@ export const ReorderRecommendationsPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
   const queryClient = useQueryClient();
   const [quantities, setQuantities] = React.useState<Record<string, string>>({});
-  const [forecastModel, setForecastModel] = React.useState<'moving_average' | 'seasonal_naive' | 'croston_tsb'>('moving_average');
+  const [forecastModel, setForecastModel] = React.useState<'moving_average' | 'seasonal_naive' | 'croston_tsb' | 'auto'>('moving_average');
   const [busyId, setBusyId] = React.useState('');
   const [message, setMessage] = React.useState('');
   const [error, setError] = React.useState('');
@@ -817,11 +817,21 @@ export const ReorderRecommendationsPage: React.FC = () => {
     if (!activeStoreId) return;
     setBusyId('generate'); setError(''); setMessage('');
     try {
-      const result = await apiFetch<{ created_count: number; forecast_model: string }>(
+      const result = await apiFetch<{
+        created_count: number;
+        forecast_model: string;
+        model_selection_method: string;
+        models_used: Record<string, number>;
+      }>(
         `/forecasting/stores/${activeStoreId}/reorder-suggestions/generate?model=${forecastModel}`,
         { method: 'POST' },
       );
-      setMessage(`Generated ${result.created_count} reorder suggestions using ${result.forecast_model.replaceAll('_', ' ')}.`);
+      const modelsUsed = Object.entries(result.models_used)
+        .map(([name, count]) => `${name.replaceAll('_', ' ')} (${count})`)
+        .join(', ');
+      setMessage(
+        `Generated ${result.created_count} reorder suggestions. Baselines evaluated: ${modelsUsed || 'no SKU had sufficient sales history'}.`,
+      );
       await refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not generate suggestions');
@@ -850,7 +860,7 @@ export const ReorderRecommendationsPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 4 · Baseline forecast and reorder planner"
-        summary="Choose a moving average, seven-day seasonal naive or Croston-TSB intermittent-demand baseline. Lead-time demand, safety stock and supplier pack-size rounding generate recommendations; owner approval is required and no purchase order is created."
+        summary="Choose a fixed baseline or auto-select the best per SKU by rolling-origin WAPE. Auto mode requires at least three evaluation windows and falls back to moving average when evidence is insufficient. Owner approval is required; no purchase order is created."
       />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -859,13 +869,14 @@ export const ReorderRecommendationsPage: React.FC = () => {
             Demand baseline
             <select
               value={forecastModel}
-              onChange={(event) => setForecastModel(event.target.value as 'moving_average' | 'seasonal_naive' | 'croston_tsb')}
+              onChange={(event) => setForecastModel(event.target.value as 'moving_average' | 'seasonal_naive' | 'croston_tsb' | 'auto')}
               disabled={busyId !== ''}
               className="mt-1 block h-9 min-w-56 rounded-lg border border-slate-300 px-2 text-xs"
             >
               <option value="moving_average">Moving average</option>
               <option value="seasonal_naive">7-day seasonal naive</option>
               <option value="croston_tsb">Croston TSB · intermittent demand</option>
+              <option value="auto">Auto-select by rolling WAPE</option>
             </select>
           </label>
         </div>
