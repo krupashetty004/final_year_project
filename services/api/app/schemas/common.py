@@ -11,6 +11,10 @@ class HealthResponse(BaseModel):
     stage: str
     database_connected: bool
     timestamp_utc: datetime
+    database_engine: str = "postgresql"
+    synthetic_seed: int = 42
+    gemini_configured: bool = False
+    table_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class StoreSummary(BaseModel):
