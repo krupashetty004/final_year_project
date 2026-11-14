@@ -1,5 +1,5 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   CartesianGrid,
@@ -30,26 +30,212 @@ const StageNotice: React.FC<{ stage: string; summary: string }> = ({ stage, summ
   </div>
 );
 
-export const UploadShelfPhotoPage: React.FC = () => (
-  <div className="space-y-5">
-    <StageNotice
-      stage="Stage 3 Target · Photo-to-Catalogue Pipeline"
-      summary="Computer vision service boundary (`services/vision`) is scaffolded in Stage 1. RT-DETR detection, YOLO11 baseline evaluation, DINOv2/CLIP embeddings, and EasyOCR matching will be activated in Stage 3."
-    />
-    <Card>
-      <CardHeader>
-        <h2 className="font-display text-sm font-semibold text-slate-900">
-          Photo-to-Catalogue Architecture Rules
-        </h2>
-      </CardHeader>
-      <CardContent className="text-xs text-slate-600 space-y-2">
-        <p>1. Shelf images cannot reliably count stacked items behind front-facing SKUs; owner quantity confirmation is strictly mandatory.</p>
-        <p>2. Unknown products will be flagged rather than forced into incorrect SKU matches.</p>
-        <p>3. Loose commodities (rice, dal, sugar) always support manual per-kg listing.</p>
-      </CardContent>
-    </Card>
-  </div>
-);
+type ShelfCandidate = { product_id: string; sku_code: string; name: string; brand: string; score: number };
+type ShelfDetection = {
+  detected_product_id: string;
+  detector_label: string;
+  detection_confidence: number;
+  ocr_text: string;
+  top_matches: ShelfCandidate[];
+  is_unknown: boolean;
+};
+type ShelfAnalysis = {
+  upload_id: string;
+  status: string;
+  detected_count: number;
+  vision: { detections: ShelfDetection[]; owner_quantity_confirmation_required: boolean };
+};
+
+export const UploadShelfPhotoPage: React.FC = () => {
+  const { activeStoreId } = useStoreContext();
+  const [file, setFile] = React.useState<File | null>(null);
+  const [analysis, setAnalysis] = React.useState<ShelfAnalysis | null>(null);
+  const [selected, setSelected] = React.useState<Record<string, string>>({});
+  const [quantities, setQuantities] = React.useState<Record<string, string>>({});
+  const [expiryDates, setExpiryDates] = React.useState<Record<string, string>>({});
+  const [prices, setPrices] = React.useState<Record<string, string>>({});
+  const [confirmed, setConfirmed] = React.useState<string[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const queryClient = useQueryClient();
+
+  const { data: catalogue = [] } = useQuery({
+    queryKey: ['inventory-catalogue-for-review'],
+    queryFn: () => apiFetch<Array<{ id: string; sku_code: string; name: string; brand: string }>>(
+      '/inventory/products?limit=2000',
+    ),
+  });
+
+  const analyze = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file || !activeStoreId) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    setAnalysis(null);
+    setConfirmed([]);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const result = await apiFetch<ShelfAnalysis>(
+        `/inventory/stores/${activeStoreId}/images/analyze`,
+        { method: 'POST', body },
+      );
+      setAnalysis(result);
+      setSelected(Object.fromEntries(result.vision.detections.map((d) => [
+        d.detected_product_id, d.top_matches[0]?.product_id ?? '',
+      ])));
+      setMessage(`Analysis complete: ${result.detected_count} object regions require review.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Shelf image analysis failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirm = async (detection: ShelfDetection) => {
+    if (!analysis || !activeStoreId) return;
+    const productId = selected[detection.detected_product_id];
+    const quantity = Number(quantities[detection.detected_product_id]);
+    if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+      setError('Select a catalogue SKU and enter the physically counted quantity.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const payload: Record<string, unknown> = { product_id: productId, quantity };
+      const expiry = expiryDates[detection.detected_product_id];
+      const price = prices[detection.detected_product_id];
+      if (expiry) payload.expiry_date = expiry;
+      if (price) payload.selling_price_paise = Math.round(Number(price) * 100);
+      await apiFetch(
+        `/inventory/stores/${activeStoreId}/images/${analysis.upload_id}/detections/${detection.detected_product_id}/confirm`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      );
+      setConfirmed((items) => [...items, detection.detected_product_id]);
+      setMessage('Owner-confirmed stock quantity added to inventory.');
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not confirm this detection');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <StageNotice
+        stage="Stage 3 · OCR-assisted shelf-photo beta"
+        summary="Generic YOLO object regions and OCR text are used to rank catalogue candidates. This is not a retail-trained detector; owner SKU selection and physical quantity confirmation are mandatory."
+      />
+      <Card>
+        <CardHeader>
+          <h2 className="font-display text-sm font-semibold text-slate-900">Upload a shelf photo</h2>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <form onSubmit={analyze} className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              className="min-w-0 flex-1 text-xs"
+            />
+            <Button type="submit" disabled={!file || !activeStoreId || busy}>
+              {busy ? 'Processing…' : 'Analyze shelf photo'}
+            </Button>
+          </form>
+          <p className="text-xs text-slate-500">JPEG, PNG or WebP; maximum 10 MB. Each confirmed quantity is added as a new stock count.</p>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+          {message && <p className="text-xs text-teal-800">{message}</p>}
+        </CardContent>
+      </Card>
+      {analysis && (
+        <Card>
+          <CardHeader>
+            <h2 className="font-display text-sm font-semibold text-slate-900">
+              Detection review · {analysis.detected_count} object regions
+            </h2>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {analysis.vision.detections.length === 0 && (
+              <p className="text-xs text-slate-500">No objects were detected. Try a clearer, well-lit photo.</p>
+            )}
+            {analysis.vision.detections.map((d, index) => {
+              const done = confirmed.includes(d.detected_product_id);
+              return (
+                <div key={d.detected_product_id} className="rounded-lg border border-slate-200 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-900">
+                      Region {index + 1} · {d.detector_label} · {(d.detection_confidence * 100).toFixed(0)}% detector confidence
+                    </p>
+                    <span className={done ? 'text-xs text-teal-700' : 'text-xs text-amber-700'}>
+                      {done ? 'Confirmed' : d.is_unknown ? 'Unknown SKU candidate' : 'Review required'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">OCR: {d.ocr_text || 'No readable package text found'}</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="text-xs text-slate-600">
+                      Confirm SKU
+                      <select
+                        value={selected[d.detected_product_id] ?? ''}
+                        disabled={done || busy}
+                        onChange={(event) => setSelected((v) => ({ ...v, [d.detected_product_id]: event.target.value }))}
+                        className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-2 text-xs"
+                      >
+                        <option value="">Choose a product</option>
+                        {catalogue.map((p) => (
+                          <option key={p.id} value={p.id}>{p.sku_code} · {p.brand} {p.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Physically counted quantity
+                      <input
+                        type="number" min="0.001" step="0.001" required
+                        value={quantities[d.detected_product_id] ?? ''}
+                        disabled={done || busy}
+                        onChange={(event) => setQuantities((v) => ({ ...v, [d.detected_product_id]: event.target.value }))}
+                        className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-2 text-xs"
+                      />
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Batch expiry date (optional)
+                      <input
+                        type="date"
+                        value={expiryDates[d.detected_product_id] ?? ''}
+                        disabled={done || busy}
+                        onChange={(event) => setExpiryDates((v) => ({ ...v, [d.detected_product_id]: event.target.value }))}
+                        className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-2 text-xs"
+                      />
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Selling price in ₹ (optional)
+                      <input
+                        type="number" min="0.01" step="0.01"
+                        value={prices[d.detected_product_id] ?? ''}
+                        disabled={done || busy}
+                        onChange={(event) => setPrices((v) => ({ ...v, [d.detected_product_id]: event.target.value }))}
+                        className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-2 text-xs"
+                      />
+                    </label>
+                  </div>
+                  {!done && (
+                    <Button size="sm" disabled={busy} onClick={() => confirm(d)}>
+                      Confirm SKU and add quantity
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+};
 
 export const DetectionReviewPage: React.FC = () => (
   <div className="space-y-5">
@@ -157,14 +343,104 @@ export const DemandForecastingPage: React.FC = () => {
   );
 };
 
-export const ReorderRecommendationsPage: React.FC = () => (
-  <div className="space-y-5">
-    <StageNotice
-      stage="Stage 4 Target · Reorder Point & Safety Stock Planner"
-      summary="Formula ROP = Expected Lead-Time Demand + (1.65 × σ × √L) with supplier pack-size rounding will generate owner-approvable suggestions here in Stage 4."
-    />
-  </div>
-);
+export const ReorderRecommendationsPage: React.FC = () => {
+  const { activeStoreId } = useStoreContext();
+  const queryClient = useQueryClient();
+  const [quantities, setQuantities] = React.useState<Record<string, string>>({});
+  const [busyId, setBusyId] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const [error, setError] = React.useState('');
+  const { data, refetch, isLoading } = useQuery({
+    queryKey: ['reorder-suggestions', activeStoreId],
+    queryFn: () => apiFetch<{ suggestions: Array<{
+      id: string; product_id: string; current_available_qty: number;
+      suggested_qty: number; supplier_pack_size: number;
+      estimated_cost_paise: number; explanation: string; status: string;
+    }> }>(`/forecasting/stores/${activeStoreId}/reorder-suggestions`),
+    enabled: Boolean(activeStoreId),
+  });
+
+  const generate = async () => {
+    if (!activeStoreId) return;
+    setBusyId('generate'); setError(''); setMessage('');
+    try {
+      const result = await apiFetch<{ created_count: number }>(
+        `/forecasting/stores/${activeStoreId}/reorder-suggestions/generate`,
+        { method: 'POST' },
+      );
+      setMessage(`Generated ${result.created_count} new reorder suggestions.`);
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not generate suggestions');
+    } finally { setBusyId(''); }
+  };
+
+  const decide = async (id: string, decision: 'accepted' | 'edited' | 'rejected') => {
+    if (!activeStoreId) return;
+    setBusyId(id); setError('');
+    try {
+      const payload: Record<string, unknown> = { decision };
+      if (decision === 'edited') payload.final_qty = Number(quantities[id]);
+      await apiFetch(
+        `/forecasting/stores/${activeStoreId}/reorder-suggestions/${id}/decision`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      );
+      setMessage(`Suggestion ${decision}.`);
+      queryClient.invalidateQueries({ queryKey: ['reorder-suggestions', activeStoreId] });
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save decision');
+    } finally { setBusyId(''); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <StageNotice
+        stage="Stage 4 · Baseline forecast and reorder planner"
+        summary="Moving-average demand history, lead-time demand, safety stock and supplier pack-size rounding generate recommendations. Owner approval is required; this action does not create a purchase order."
+      />
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">Pending suggestions: {data?.suggestions.length ?? 0}</p>
+        <Button size="sm" disabled={!activeStoreId || busyId !== ''} onClick={generate}>
+          {busyId === 'generate' ? 'Generating…' : 'Generate reorder suggestions'}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-red-700">{error}</p>}
+      {message && <p className="text-xs text-teal-800">{message}</p>}
+      <Card>
+        <CardContent className="divide-y divide-slate-100">
+          {isLoading && <p className="py-4 text-xs text-slate-500">Loading suggestions…</p>}
+          {!isLoading && (data?.suggestions ?? []).length === 0 && (
+            <p className="py-4 text-xs text-slate-500">No pending suggestions. Generate them after sales history is available.</p>
+          )}
+          {(data?.suggestions ?? []).map((row) => (
+            <div key={row.id} className="py-4 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-slate-900">SKU reference: {row.product_id}</p>
+                <p className="text-xs text-slate-600">Suggested: {formatQty(row.suggested_qty, '')} · Cost: {formatINR(row.estimated_cost_paise)}</p>
+              </div>
+              <p className="text-xs text-slate-500">{row.explanation}</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="text-xs text-slate-600">
+                  Edit quantity (pack size {row.supplier_pack_size})
+                  <input
+                    type="number" min="0.001" step={row.supplier_pack_size}
+                    value={quantities[row.id] ?? String(row.suggested_qty)}
+                    onChange={(event) => setQuantities((v) => ({ ...v, [row.id]: event.target.value }))}
+                    className="mt-1 block h-9 w-36 rounded-lg border border-slate-300 px-2 text-xs"
+                  />
+                </label>
+                <Button size="sm" disabled={busyId !== ''} onClick={() => decide(row.id, 'accepted')}>Approve suggestion</Button>
+                <Button size="sm" variant="secondary" disabled={busyId !== ''} onClick={() => decide(row.id, 'edited')}>Approve edited</Button>
+                <Button size="sm" variant="ghost" disabled={busyId !== ''} onClick={() => decide(row.id, 'rejected')}>Reject</Button>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 export const SmartPricingDashboardPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
@@ -246,14 +522,86 @@ export const SmartPricingDashboardPage: React.FC = () => {
   );
 };
 
-export const PricingInboxPage: React.FC = () => (
-  <div className="space-y-5">
-    <StageNotice
-      stage="Stage 5 Target · Owner Pricing Recommendation Inbox"
-      summary="Smart Pricing Agent never changes selling prices automatically. Pending recommendations awaiting owner accept/edit/reject will appear here in Stage 5."
-    />
-  </div>
-);
+export const PricingInboxPage: React.FC = () => {
+  const { activeStoreId } = useStoreContext();
+  const queryClient = useQueryClient();
+  const [prices, setPrices] = React.useState<Record<string, string>>({});
+  const [busyId, setBusyId] = React.useState('');
+  const [message, setMessage] = React.useState('');
+  const [error, setError] = React.useState('');
+  const { data, refetch, isLoading } = useQuery({
+    queryKey: ['pricing-recommendations', activeStoreId],
+    queryFn: () => apiFetch<{ recommendations: Array<{
+      id: string; product_id: string; current_price_paise: number;
+      recommended_price_paise: number; status: string; explanation: string;
+    }> }>(`/pricing/stores/${activeStoreId}/recommendations?status=pending`),
+    enabled: Boolean(activeStoreId),
+  });
+
+  const decide = async (id: string, decision: 'accepted' | 'edited' | 'rejected') => {
+    if (!activeStoreId) return;
+    setBusyId(id); setError('');
+    try {
+      const payload: Record<string, unknown> = { decision };
+      if (decision === 'edited') payload.final_price_paise = Math.round(Number(prices[id]) * 100);
+      await apiFetch(
+        `/pricing/stores/${activeStoreId}/recommendations/${id}/decision`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      );
+      setMessage(`Recommendation ${decision}. Approved changes are recorded in price history.`);
+      queryClient.invalidateQueries({ queryKey: ['pricing-recommendations', activeStoreId] });
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save pricing decision');
+    } finally { setBusyId(''); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <StageNotice
+        stage="Stage 5 · Owner pricing approval inbox"
+        summary="The deterministic pricing engine considers recent verified competitor prices, expiry dates and excess-stock pressure. Price elasticity is not trained yet. Prices never change until the owner approves."
+      />
+      {error && <p className="text-xs text-red-700">{error}</p>}
+      {message && <p className="text-xs text-teal-800">{message}</p>}
+      <Card>
+        <CardHeader>
+          <h2 className="font-display text-sm font-semibold text-slate-900">Pending price recommendations</h2>
+        </CardHeader>
+        <CardContent className="divide-y divide-slate-100">
+          {isLoading && <p className="py-4 text-xs text-slate-500">Loading recommendations…</p>}
+          {!isLoading && (data?.recommendations ?? []).length === 0 && (
+            <p className="py-4 text-xs text-slate-500">No pending pricing recommendations. Generate them from the Smart Pricing dashboard.</p>
+          )}
+          {(data?.recommendations ?? []).map((row) => (
+            <div key={row.id} className="py-4 space-y-2">
+              <p className="text-xs font-semibold text-slate-900">Product reference: {row.product_id}</p>
+              <div className="flex flex-wrap gap-4 text-xs text-slate-600">
+                <span>Current: {formatINR(row.current_price_paise)}</span>
+                <span>Recommended: {formatINR(row.recommended_price_paise)}</span>
+              </div>
+              <p className="text-xs text-slate-500">{row.explanation}</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="text-xs text-slate-600">
+                  Edit price in ₹
+                  <input
+                    type="number" min="0.01" step="1"
+                    value={prices[row.id] ?? String(row.recommended_price_paise / 100)}
+                    onChange={(event) => setPrices((v) => ({ ...v, [row.id]: event.target.value }))}
+                    className="mt-1 block h-9 w-32 rounded-lg border border-slate-300 px-2 text-xs"
+                  />
+                </label>
+                <Button size="sm" disabled={busyId !== ''} onClick={() => decide(row.id, 'accepted')}>Approve</Button>
+                <Button size="sm" variant="secondary" disabled={busyId !== ''} onClick={() => decide(row.id, 'edited')}>Approve edited</Button>
+                <Button size="sm" variant="ghost" disabled={busyId !== ''} onClick={() => decide(row.id, 'rejected')}>Reject</Button>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 export const ProductAnalyticsPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
