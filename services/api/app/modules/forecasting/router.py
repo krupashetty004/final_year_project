@@ -31,7 +31,7 @@ def forecasting_module_status() -> dict:
     return {
         "module": "forecasting",
         "stage": "baseline_forecasting_with_rolling_origin_evaluation",
-        "models": ["moving_average", "seasonal_naive"],
+        "models": ["moving_average", "seasonal_naive", "croston_tsb"],
         "evaluation": ["expanding_window_rolling_origin", "MAE", "WAPE", "bias"],
         "not_yet_enabled": ["Croston-TSB", "LightGBM", "N-HiTS", "production model selection"],
     }
@@ -70,7 +70,7 @@ def get_forecast(
     store_id: UUID,
     product_id: UUID,
     horizon_days: int = Query(default=7, ge=1, le=90),
-    model: str = Query(default="moving_average", pattern="^(moving_average|seasonal_naive)$"),
+    model: str = Query(default="moving_average", pattern="^(moving_average|seasonal_naive|croston_tsb)$"),
     owner: User = Depends(get_current_owner),
     db: Session = Depends(get_db),
 ) -> dict:
