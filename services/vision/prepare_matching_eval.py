@@ -69,11 +69,16 @@ def prepare_matching_samples(
 ) -> list[dict[str, Any]]:
     """Embed query crops and reference images, caching repeated reference files."""
     cache: dict[Path, tuple[list[float], str]] = {}
+    manifest_root = manifest_directory.resolve()
 
     def embed_relative(raw_path: Any, context: str) -> tuple[list[float], str, Path]:
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ValueError(f"{context}: image path is required")
-        resolved = (manifest_directory / raw_path).resolve()
+        resolved = (manifest_root / raw_path).resolve()
+        try:
+            resolved.relative_to(manifest_root)
+        except ValueError as exc:
+            raise ValueError(f"{context}: image path must stay inside the manifest directory") from exc
         if resolved in cache:
             vector, model_name = cache[resolved]
         else:
@@ -105,7 +110,6 @@ def prepare_matching_samples(
             f"{context} query_image",
         )
         prepared_catalogue = []
-        reference_paths: set[Path] = set()
         for product_index, product in enumerate(catalogue, start=1):
             product_context = f"{context} catalogue product {product_index}"
             if not isinstance(product, dict):
@@ -129,7 +133,6 @@ def prepare_matching_samples(
                     )
                 if reference_model != model_name:
                     raise ValueError("All reference and query embeddings must use the same model")
-                reference_paths.add(resolved)
                 reference_embeddings.append(vector)
             prepared_catalogue.append({
                 "product_id": product_id,
