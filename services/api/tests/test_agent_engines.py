@@ -127,8 +127,13 @@ def test_croston_tsb_handles_intermittent_demand_and_zero_demand():
         horizon_days=7,
         model="croston_tsb",
     )
-    assert intermittent.predicted_qty >= 0
-    assert intermittent.predicted_qty < 10
+    assert intermittent.predicted_qty > 0
+    recent_event = forecast_demand(
+        [0, 0, 10],
+        horizon_days=7,
+        model="croston_tsb",
+    )
+    assert intermittent.predicted_qty < recent_event.predicted_qty
 
     no_demand = forecast_demand(
         [0] * 40,
