@@ -177,6 +177,38 @@ def test_owner_reference_upload_stores_512d_embedding(owner_client, monkeypatch)
     assert matches[0]["product_id"] == product["id"]
     assert matches[0]["score_type"] == "cosine_similarity"
 
+
+def test_owner_can_run_sku_rolling_origin_backtest(owner_client):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.database.session import SessionLocal
+    from app.models.entities import Sale
+
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    with SessionLocal() as db:
+        product_id = db.scalar(
+            select(Sale.product_id)
+            .where(Sale.store_id == UUID(store_id))
+            .distinct()
+            .limit(1)
+        )
+    assert product_id is not None
+
+    response = client.get(
+        f"/api/v1/forecasting/stores/{store_id}/products/{product_id}/backtest"
+        "?horizon_days=7&min_train_days=28&step_days=7",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "evaluated"
+    assert payload["origin_count"] > 0
+    assert set(payload["models"]) == {"moving_average", "seasonal_naive"}
+    assert all("wape_pct" in metrics for metrics in payload["models"].values())
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
