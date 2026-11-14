@@ -34,7 +34,8 @@ export interface AuthSession {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem('rc_token');
   const headers = new Headers(init?.headers || {});
-  if (!headers.has('Content-Type') && init?.body) {
+  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData;
+  if (!headers.has('Content-Type') && init?.body && !isFormData) {
     headers.set('Content-Type', 'application/json');
   }
   if (token) {
@@ -44,7 +45,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(json.error || `Request failed with status ${res.status}`);
+    throw new Error(json.error || json.detail || `Request failed with status ${res.status}`);
   }
   return json as T;
 }
