@@ -964,7 +964,7 @@ export const SmartPricingDashboardPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 5 · Rule-based Smart Pricing Agent"
-        summary={`Comparisons use verified competitor observations from the previous 30 days within 2 km. Expiry markdown and excess-stock rules are active; learned price elasticity is not enabled.`}
+        summary={`Only the latest non-synthetic, verified price per verified peer within 2 km and 30 days is used. A real-sales 7d/28d demand trend, expiry markdown and excess-stock rules are active; learned price elasticity is not enabled.`}
       />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-slate-500">
@@ -1027,8 +1027,12 @@ export const PricingInboxPage: React.FC = () => {
   const { data, refetch, isLoading } = useQuery({
     queryKey: ['pricing-recommendations', activeStoreId],
     queryFn: () => apiFetch<{ recommendations: Array<{
-      id: string; product_id: string; sku_code: string; product_name: string; current_price_paise: number;
-      recommended_price_paise: number; status: string; explanation: string;
+      id: string; product_id: string; sku_code: string; product_name: string;
+      current_price_paise: number; recommended_price_paise: number;
+      nearby_median_price_paise: number | null; demand_signal_price_paise: number | null;
+      expiry_discount_pct: number; stock_pressure_factor: number;
+      expected_margin_bps: number; constraints_passed: boolean;
+      status: string; explanation: string;
     }> }>(`/pricing/stores/${activeStoreId}/recommendations?status=pending`),
     enabled: Boolean(activeStoreId),
   });
@@ -1055,7 +1059,7 @@ export const PricingInboxPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 5 · Owner pricing approval inbox"
-        summary="The deterministic pricing engine considers recent verified competitor prices, expiry dates and excess-stock pressure. Price elasticity is not trained yet. Prices never change until the owner approves."
+        summary="The rules consider the latest real verified competitor prices, a 7-day versus prior 28-day real-sales trend, expiry markdown and excess stock. Learned price elasticity is not enabled. Prices change only after owner approval."
       />
       {error && <p className="text-xs text-red-700">{error}</p>}
       {message && <p className="text-xs text-teal-800">{message}</p>}
@@ -1074,6 +1078,14 @@ export const PricingInboxPage: React.FC = () => {
               <div className="flex flex-wrap gap-4 text-xs text-slate-600">
                 <span>Current: {formatINR(row.current_price_paise)}</span>
                 <span>Recommended: {formatINR(row.recommended_price_paise)}</span>
+                <span>Expected gross margin: {(row.expected_margin_bps / 100).toFixed(2)}%</span>
+              </div>
+              <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+                <span>Verified peer median: {row.nearby_median_price_paise ? formatINR(row.nearby_median_price_paise) : 'No real peer data'}</span>
+                <span>Demand signal: {row.demand_signal_price_paise ? formatINR(row.demand_signal_price_paise) : 'Neutral / insufficient real sales history'}</span>
+                <span>Expiry markdown considered: {row.expiry_discount_pct.toFixed(1)}%</span>
+                <span>Stock pressure: {row.stock_pressure_factor.toFixed(2)}×</span>
+                <span>Constraints: {row.constraints_passed ? 'Passed' : 'Failed'}</span>
               </div>
               <p className="text-xs text-slate-500">{row.explanation}</p>
               <div className="flex flex-wrap items-end gap-2">
