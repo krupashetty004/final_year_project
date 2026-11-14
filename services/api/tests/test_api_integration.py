@@ -368,7 +368,7 @@ def test_pricing_recommendation_uses_only_real_sales_demand_trend(owner_client):
         assert recommendation is not None
         assert recommendation.demand_signal_price_paise is not None
         assert recommendation.demand_signal_price_paise > recommendation.current_price_paise
-        assert "high_demand" in recommendation.explanation
+        assert "+3% demand-trend signal was considered" in recommendation.explanation
 
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
