@@ -36,6 +36,34 @@ def forecasting_module_status() -> dict:
     }
 
 
+
+
+@router.get("/stores/{store_id}/sales-history")
+def get_sales_history(
+    store_id: UUID,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    since = datetime.now(timezone.utc) - timedelta(days=180)
+    rows = db.execute(
+        select(Sale.sold_at_utc, Sale.quantity, Sale.total_revenue_paise, Sale.festival_tag).where(
+            Sale.store_id == store_id, Sale.sold_at_utc >= since,
+        ).order_by(Sale.sold_at_utc)
+    ).all()
+    daily: dict[date, dict] = {}
+    for sold_at, quantity, revenue, festival in rows:
+        day = sold_at.date()
+        entry = daily.setdefault(day, {"date": day.isoformat(), "units_sold": 0.0,
+                                       "revenue_paise": 0, "festival_tag": None})
+        entry["units_sold"] += float(quantity)
+        entry["revenue_paise"] += int(revenue)
+        if festival:
+            entry["festival_tag"] = festival
+    series = [daily[day] for day in sorted(daily)]
+    return {"store_id": str(store_id), "days": len(series), "series": series}
+
+
 @router.get("/stores/{store_id}/products/{product_id}/forecast")
 def get_forecast(
     store_id: UUID,
