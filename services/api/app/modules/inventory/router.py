@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from math import ceil
+from math import ceil, isfinite
 import json
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -23,6 +23,51 @@ from app.schemas.common import ProductRead, StoreSummary
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+def _match_product_reference_vectors(
+    db: Session,
+    store_id: UUID,
+    embedding: list[float],
+) -> list[dict]:
+    """Retrieve unique SKU candidates with PostgreSQL pgvector cosine distance."""
+    if len(embedding) != 512 or not all(isfinite(float(value)) for value in embedding):
+        raise ValueError("A finite 512-dimensional image embedding is required")
+    distance = ProductImage.embedding.cosine_distance(embedding)
+    minimum_distance = func.min(distance)
+    threshold = get_settings().VISION_UNKNOWN_SIMILARITY_THRESHOLD
+    if not -1.0 <= threshold <= 1.0:
+        raise ValueError("VISION_UNKNOWN_SIMILARITY_THRESHOLD must be between -1 and 1")
+    rows = db.execute(
+        select(
+            Product.id,
+            Product.sku_code,
+            Product.name,
+            Product.brand,
+            minimum_distance.label("distance"),
+        )
+        .join(ProductImage, ProductImage.product_id == Product.id)
+        .where(
+            ProductImage.is_reference.is_(True),
+            ProductImage.embedding.is_not(None),
+            or_(ProductImage.store_id.is_(None), ProductImage.store_id == store_id),
+        )
+        .group_by(Product.id, Product.sku_code, Product.name, Product.brand)
+        .having(minimum_distance <= 1.0 - threshold)
+        .order_by(minimum_distance.asc())
+        .limit(3)
+    ).all()
+    return [
+        {
+            "product_id": str(product_id),
+            "sku_code": sku_code,
+            "name": name,
+            "brand": brand,
+            "score": round(1.0 - float(distance_value), 6),
+            "score_type": "cosine_similarity",
+        }
+        for product_id, sku_code, name, brand, distance_value in rows
+    ]
 
 
 @router.get("/stores", response_model=list[StoreSummary])
@@ -394,21 +439,14 @@ async def analyze_inventory_photo(
     db.commit()
 
     products = list(db.scalars(select(Product).order_by(Product.sku_code).limit(2000)).all())
-    reference_rows = db.scalars(select(ProductImage).where(
+    has_visual_references = db.scalar(select(ProductImage.id).where(
         ProductImage.is_reference.is_(True),
         ProductImage.embedding.is_not(None),
         or_(ProductImage.store_id.is_(None), ProductImage.store_id == store_id),
-    )).all()
-    references_by_product: dict[UUID, list[list[float]]] = {}
-    for reference in reference_rows:
-        if reference.embedding is not None:
-            references_by_product.setdefault(reference.product_id, []).append(
-                [float(value) for value in reference.embedding]
-            )
+    ).limit(1)) is not None
     catalogue = [{
         "product_id": str(p.id), "sku_code": p.sku_code, "barcode": p.barcode or "",
         "name": p.name, "brand": p.brand, "variant": p.variant,
-        "reference_embeddings": references_by_product.get(p.id, []),
     } for p in products]
     vision_url = get_settings().VISION_SERVICE_URL.rstrip("/")
     try:
@@ -416,12 +454,28 @@ async def analyze_inventory_photo(
             response = await client.post(
                 f"{vision_url}/analyze",
                 files={"file": (filename, raw, file.content_type)},
-                data={"catalogue_json": json.dumps(catalogue)},
+                data={
+                    "catalogue_json": json.dumps(catalogue),
+                    "use_visual_embeddings": str(has_visual_references).lower(),
+                },
             )
             response.raise_for_status()
         result = response.json()
         saved_detections = []
         for detection in result.get("detections", []):
+            image_embedding = detection.pop("image_embedding", None)
+            if image_embedding is not None:
+                visual_matches = _match_product_reference_vectors(
+                    db, store_id, [float(value) for value in image_embedding]
+                )
+                if visual_matches:
+                    detection["top_matches"] = visual_matches
+                    detection["is_unknown"] = False
+                    detection["matching_method"] = "pgvector_cosine_similarity"
+                elif detection.get("top_matches"):
+                    detection["matching_method"] = "ocr_text_fallback"
+                else:
+                    detection["matching_method"] = "no_match"
             bbox = detection.get("bbox", [0, 0, 0, 0])
             record = DetectedProduct(
                 upload_id=upload_id,
