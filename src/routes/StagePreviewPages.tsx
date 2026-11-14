@@ -640,6 +640,7 @@ export const DemandForecastingPage: React.FC = () => {
       horizon_days: number;
       data_quality: string;
       best_baseline_by_wape: string | null;
+      minimum_origins_for_ranking: number;
       models: Record<string, {
         origin_count: number;
         mae_horizon_units: number | null;
@@ -757,7 +758,9 @@ export const DemandForecastingPage: React.FC = () => {
                 ))}
               </div>
               <p className="text-xs text-slate-600">
-                Lower WAPE baseline: {backtest.best_baseline_by_wape?.replaceAll('_', ' ') ?? 'not defined (zero actual demand)'}.
+                Lower WAPE baseline: {backtest.origin_count < backtest.minimum_origins_for_ranking
+                  ? 'not ranked (too few rolling windows)'
+                  : backtest.best_baseline_by_wape?.replaceAll('_', ' ') ?? 'not defined (zero actual demand)'}.
               </p>
               <p className="text-xs text-slate-500">
                 These are historical backtest metrics, not a guarantee of future performance. Seeded synthetic sales are identified above and must not be interpreted as real store accuracy.
