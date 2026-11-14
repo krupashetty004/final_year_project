@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -394,9 +394,21 @@ async def analyze_inventory_photo(
     db.commit()
 
     products = list(db.scalars(select(Product).order_by(Product.sku_code).limit(2000)).all())
+    reference_rows = db.scalars(select(ProductImage).where(
+        ProductImage.is_reference.is_(True),
+        ProductImage.embedding.is_not(None),
+        or_(ProductImage.store_id.is_(None), ProductImage.store_id == store_id),
+    )).all()
+    references_by_product: dict[UUID, list[list[float]]] = {}
+    for reference in reference_rows:
+        if reference.embedding is not None:
+            references_by_product.setdefault(reference.product_id, []).append(
+                [float(value) for value in reference.embedding]
+            )
     catalogue = [{
         "product_id": str(p.id), "sku_code": p.sku_code, "barcode": p.barcode or "",
         "name": p.name, "brand": p.brand, "variant": p.variant,
+        "reference_embeddings": references_by_product.get(p.id, []),
     } for p in products]
     vision_url = get_settings().VISION_SERVICE_URL.rstrip("/")
     try:
