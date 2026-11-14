@@ -29,8 +29,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const { data, isLoading } = useQuery({
-    queryKey: ['stores'],
+    queryKey: ['stores', session?.user.id],
     queryFn: () => apiFetch<{ stores: StoreSummary[] }>('/stores'),
+    enabled: Boolean(session?.user.id),
   });
 
   const stores = data?.stores ?? [];
