@@ -370,6 +370,123 @@ def test_pricing_recommendation_uses_only_real_sales_demand_trend(owner_client):
         assert recommendation.demand_signal_price_paise > recommendation.current_price_paise
         assert "+3% demand-trend signal was considered" in recommendation.explanation
 
+
+def test_manual_inventory_price_edit_obeys_daily_price_change_guard(owner_client):
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.database.session import SessionLocal
+    from app.models.entities import StoreInventory
+
+    client, headers = owner_client
+    store_id_text = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    store_id = UUID(store_id_text)
+    with SessionLocal() as db:
+        item = db.scalar(
+            select(StoreInventory).where(StoreInventory.store_id == store_id).limit(1)
+        )
+        assert item is not None
+        inventory_id = item.id
+        original = {
+            "mrp": item.mrp_paise,
+            "cost": item.cost_price_paise,
+            "margin": item.min_margin_bps,
+            "last_changed": item.last_price_changed_at_utc,
+        }
+        current = item.selling_price_paise
+        item.mrp_paise = current + 10000
+        item.cost_price_paise = max(0, current // 2)
+        item.min_margin_bps = 1000
+        item.last_price_changed_at_utc = datetime.now(timezone.utc)
+        version = item.version
+        db.commit()
+
+    response = client.patch(
+        f"/api/v1/inventory/stores/{store_id_text}/inventory/{inventory_id}",
+        headers=headers,
+        json={
+            "available_qty": 10,
+            "reserved_qty": 0,
+            "selling_price_paise": current + 100,
+            "version": version,
+        },
+    )
+    assert response.status_code == 409, response.text
+
+    with SessionLocal() as db:
+        item = db.get(StoreInventory, inventory_id)
+        item.mrp_paise = original["mrp"]
+        item.cost_price_paise = original["cost"]
+        item.min_margin_bps = original["margin"]
+        item.last_price_changed_at_utc = original["last_changed"]
+        db.commit()
+
+
+def test_pricing_approval_obeys_same_india_local_daily_guard(owner_client):
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.database.session import SessionLocal
+    from app.models.entities import PricingRecommendation, StoreInventory
+
+    client, headers = owner_client
+    store_id_text = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    store_id = UUID(store_id_text)
+    with SessionLocal() as db:
+        item = db.scalar(
+            select(StoreInventory).where(StoreInventory.store_id == store_id).limit(1)
+        )
+        assert item is not None
+        original = {
+            "mrp": item.mrp_paise,
+            "cost": item.cost_price_paise,
+            "margin": item.min_margin_bps,
+            "last_changed": item.last_price_changed_at_utc,
+        }
+        current = item.selling_price_paise
+        item.mrp_paise = current + 10000
+        item.cost_price_paise = max(0, current // 2)
+        item.min_margin_bps = 1000
+        item.last_price_changed_at_utc = datetime.now(timezone.utc)
+        recommendation = PricingRecommendation(
+            store_id=store_id,
+            product_id=item.product_id,
+            current_price_paise=current,
+            mrp_paise=item.mrp_paise,
+            cost_price_paise=item.cost_price_paise,
+            recommended_price_paise=current + 100,
+            expected_margin_bps=5000,
+            explanation="Integration test recommendation",
+            constraints_passed=True,
+            status="pending",
+        )
+        db.add(recommendation)
+        db.flush()
+        recommendation_id = recommendation.id
+        db.commit()
+
+    response = client.post(
+        f"/api/v1/pricing/stores/{store_id_text}/recommendations/{recommendation_id}/decision",
+        headers=headers,
+        json={"decision": "accepted"},
+    )
+    assert response.status_code == 409, response.text
+
+    with SessionLocal() as db:
+        item = db.scalar(select(StoreInventory).where(StoreInventory.store_id == store_id))
+        item.mrp_paise = original["mrp"]
+        item.cost_price_paise = original["cost"]
+        item.min_margin_bps = original["margin"]
+        item.last_price_changed_at_utc = original["last_changed"]
+        recommendation = db.get(PricingRecommendation, recommendation_id)
+        if recommendation:
+            db.delete(recommendation)
+        db.commit()
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
