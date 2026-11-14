@@ -56,7 +56,7 @@ def test_prepare_manifest_caches_reused_reference_images(tmp_path, monkeypatch):
         return [1.0] + [0.0] * 511, "openai/clip-vit-base-patch32"
 
     monkeypatch.setattr(prepare, "embed_image_bytes", fake_embed)
-    rows = _manifest()
+    rows = _manifest(query_path="query-1.jpg")
     rows.append({
         **rows[0],
         "query_id": "query-2",
