@@ -604,7 +604,7 @@ export const ReferenceImagesPage: React.FC = () => {
 export const DemandForecastingPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
   const [selectedProductId, setSelectedProductId] = React.useState('');
-  const [model, setModel] = React.useState<'moving_average' | 'seasonal_naive'>('moving_average');
+  const [model, setModel] = React.useState<'moving_average' | 'seasonal_naive' | 'croston_tsb'>('moving_average');
   const { data: products = [] } = useQuery({
     queryKey: ['forecast-catalogue'],
     queryFn: () => apiFetch<Array<{ id: string; sku_code: string; name: string }>>(
@@ -664,7 +664,7 @@ export const DemandForecastingPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 4 · Sales history and SKU demand baseline"
-        summary="The historical chart shows recorded store sales. Per-SKU forecasts use a moving-average or seven-day seasonal-naive baseline, and rolling-origin backtests compare both baselines using MAE, WAPE and bias. Croston-TSB, LightGBM and production model selection are not enabled yet."
+        summary="The historical chart shows recorded store sales. Per-SKU forecasts offer moving-average, seven-day seasonal-naive and Croston TSB for intermittent demand. Rolling-origin backtests compare all three using MAE, WAPE and bias. LightGBM, N-HiTS and production model selection are not enabled yet."
       />
       <Card>
         <CardHeader>
@@ -690,11 +690,12 @@ export const DemandForecastingPage: React.FC = () => {
               Forecast baseline
               <select
                 value={model}
-                onChange={(event) => setModel(event.target.value as 'moving_average' | 'seasonal_naive')}
+                onChange={(event) => setModel(event.target.value as 'moving_average' | 'seasonal_naive' | 'croston_tsb')}
                 className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2 text-xs"
               >
                 <option value="moving_average">Moving average</option>
                 <option value="seasonal_naive">7-day seasonal naive</option>
+                <option value="croston_tsb">Croston TSB · intermittent demand</option>
               </select>
             </label>
           </div>
