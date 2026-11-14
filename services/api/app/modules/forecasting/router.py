@@ -30,9 +30,10 @@ def _daily_series(rows: list[tuple], days: int = 180) -> list[float]:
 def forecasting_module_status() -> dict:
     return {
         "module": "forecasting",
-        "stage": "deterministic_baselines_available",
+        "stage": "baseline_forecasting_with_rolling_origin_evaluation",
         "models": ["moving_average", "seasonal_naive"],
-        "not_yet_enabled": ["Croston-TSB", "LightGBM", "N-HiTS", "rolling-origin model selection"],
+        "evaluation": ["expanding_window_rolling_origin", "MAE", "WAPE", "bias"],
+        "not_yet_enabled": ["Croston-TSB", "LightGBM", "N-HiTS", "production model selection"],
     }
 
 
