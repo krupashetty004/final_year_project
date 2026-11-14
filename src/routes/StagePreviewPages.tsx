@@ -259,7 +259,7 @@ export const ReferenceImagesPage: React.FC = () => {
   return (
     <div className="space-y-5">
       <StageNotice
-        stage="Stage 1 Foundation · Stage 3 Embedding Activation"
+        stage="Stage 1 SKU Catalogue · Stage 3 Image Matching"
         summary={`800 master SKU reference image entries are registered in \`product_images\`. DINOv2-small / CLIP ViT-B/32 vector indexing activates in Stage 3.`}
       />
       <Card>
@@ -286,7 +286,7 @@ export const ReferenceImagesPage: React.FC = () => {
                   <td className="py-2 px-4 font-medium text-slate-900">{p.name}</td>
                   <td className="py-2 px-4 text-slate-700">{p.brand}</td>
                   <td className="py-2 px-4 text-slate-600">{p.category}</td>
-                  <td className="py-2 px-4 font-mono-num text-slate-500">dinov2-small · 512d</td>
+                  <td className="py-2 px-4 font-mono-num text-slate-500">OCR catalogue matching · embeddings pending</td>
                 </tr>
               ))}
             </tbody>
@@ -305,7 +305,7 @@ export const DemandForecastingPage: React.FC = () => {
       apiFetch<{
         days: number;
         series: Array<{ date: string; units_sold: number; revenue_paise: number; festival_tag: string | null }>;
-      }>(`/stores/${activeStoreId}/sales-history`),
+      >(`/forecasting/stores/${activeStoreId}/sales-history`),
     enabled: Boolean(activeStoreId),
   });
 
@@ -319,7 +319,7 @@ export const DemandForecastingPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 1 Seeded Sales History · Stage 4 Forecasting Pipeline"
-        summary="180 days of synthetic store sales (including Ugadi, Ganesh Chaturthi, Dasara, Deepavali, and Sankranti demand spikes) are loaded below. Seasonal Naive, Moving Average, Croston/TSB, and LightGBM models activate in Stage 4."
+        summary="The historical chart shows recorded store sales. Per-SKU forecasts use an available moving-average or seven-day seasonal-naive baseline; advanced model selection and rolling backtests are pending."
       />
       <Card>
         <CardHeader>
@@ -353,7 +353,7 @@ export const ReorderRecommendationsPage: React.FC = () => {
   const { data, refetch, isLoading } = useQuery({
     queryKey: ['reorder-suggestions', activeStoreId],
     queryFn: () => apiFetch<{ suggestions: Array<{
-      id: string; product_id: string; current_available_qty: number;
+      id: string; product_id: string; sku_code: string; product_name: string; current_available_qty: number;
       suggested_qty: number; supplier_pack_size: number;
       estimated_cost_paise: number; explanation: string; status: string;
     }> }>(`/forecasting/stores/${activeStoreId}/reorder-suggestions`),
@@ -416,7 +416,7 @@ export const ReorderRecommendationsPage: React.FC = () => {
           {(data?.suggestions ?? []).map((row) => (
             <div key={row.id} className="py-4 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-slate-900">SKU reference: {row.product_id}</p>
+                <p className="text-xs font-semibold text-slate-900">{row.sku_code} · {row.product_name}</p>
                 <p className="text-xs text-slate-600">Suggested: {formatQty(row.suggested_qty, '')} · Cost: {formatINR(row.estimated_cost_paise)}</p>
               </div>
               <p className="text-xs text-slate-500">{row.explanation}</p>
@@ -444,35 +444,63 @@ export const ReorderRecommendationsPage: React.FC = () => {
 
 export const SmartPricingDashboardPage: React.FC = () => {
   const { activeStoreId } = useStoreContext();
+  const queryClient = useQueryClient();
+  const [generating, setGenerating] = React.useState(false);
+  const [message, setMessage] = React.useState('');
+  const [error, setError] = React.useState('');
   const { data } = useQuery({
     queryKey: ['competitor-comp', activeStoreId],
-    queryFn: () =>
-      apiFetch<{
-        nearby_verified_store_count: number;
-        comparisons: Array<{
-          product_id: string;
-          sku_code: string;
-          name: string;
-          selling_price_paise: number;
-          mrp_paise: number;
-          nearby_verified_stores: number;
-          nearby_median_paise: number | null;
-          diff_vs_median_pct: number | null;
-        }>;
-      }>(`/stores/${activeStoreId}/competitor-comparison`),
+    queryFn: () => apiFetch<{
+      nearby_verified_store_count: number;
+      comparisons: Array<{
+        product_id: string;
+        sku_code: string;
+        name: string;
+        selling_price_paise: number;
+        mrp_paise: number;
+        nearby_verified_stores: number;
+        nearby_median_paise: number | null;
+        diff_vs_median_pct: number | null;
+      }>;
+    }>(`/pricing/stores/${activeStoreId}/competitor-comparison`),
     enabled: Boolean(activeStoreId),
   });
+
+  const generateRecommendations = async () => {
+    if (!activeStoreId) return;
+    setGenerating(true); setError(''); setMessage('');
+    try {
+      const result = await apiFetch<{ created_count: number; skipped_count: number }>(
+        `/pricing/stores/${activeStoreId}/recommendations/generate`,
+        { method: 'POST' },
+      );
+      setMessage(`Created ${result.created_count} recommendations; skipped ${result.skipped_count} items with an existing pending recommendation or infeasible constraints.`);
+      queryClient.invalidateQueries({ queryKey: ['pricing-recommendations', activeStoreId] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not generate recommendations');
+    } finally { setGenerating(false); }
+  };
 
   return (
     <div className="space-y-5">
       <StageNotice
-        stage="Stage 1 Verified Competitor Dataset · Stage 5 Smart Pricing Engine"
-        summary={`Found ${data?.nearby_verified_store_count ?? 0} verified Kirana stores within a 2.0 km radius for SKU-level median comparison. Log-log elasticity, expiry markdown, and pricing inbox approvals activate in Stage 5.`}
+        stage="Stage 5 · Rule-based Smart Pricing Agent"
+        summary={`Comparisons use verified competitor observations from the previous 30 days within 2 km. Expiry markdown and excess-stock rules are active; learned price elasticity is not enabled.`}
       />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">
+          {data?.nearby_verified_store_count ?? 0} verified competitor stores in the 2 km comparison set
+        </p>
+        <Button size="sm" disabled={!activeStoreId || generating} onClick={generateRecommendations}>
+          {generating ? 'Generating…' : 'Generate pricing recommendations'}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-red-700">{error}</p>}
+      {message && <p className="text-xs text-teal-800">{message}</p>}
       <Card>
         <CardHeader>
           <h3 className="font-display text-sm font-semibold text-slate-900">
-            Nearby Verified Store Comparison (2 km Radius · Synthetic Data)
+            Nearby verified store comparison
           </h3>
         </CardHeader>
         <div className="overflow-x-auto">
@@ -488,29 +516,17 @@ export const SmartPricingDashboardPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {(data?.comparisons ?? []).slice(0, 20).map((row) => (
+              {(data?.comparisons ?? []).slice(0, 30).map((row) => (
                 <tr key={row.product_id}>
                   <td className="py-2 px-4 font-mono-num text-slate-600">{row.sku_code}</td>
                   <td className="py-2 px-4 font-medium text-slate-900">{row.name}</td>
-                  <td className="py-2 px-4 font-mono-num text-right">
-                    {formatINR(row.selling_price_paise)}
-                  </td>
-                  <td className="py-2 px-4 font-mono-num text-right text-slate-500">
-                    {formatINR(row.mrp_paise)}
-                  </td>
+                  <td className="py-2 px-4 font-mono-num text-right">{formatINR(row.selling_price_paise)}</td>
+                  <td className="py-2 px-4 font-mono-num text-right text-slate-500">{formatINR(row.mrp_paise)}</td>
                   <td className="py-2 px-4 font-mono-num text-right">
                     {row.nearby_median_paise ? formatINR(row.nearby_median_paise) : '—'}
                   </td>
-                  <td
-                    className={`py-2 px-4 font-mono-num text-right ${
-                      row.diff_vs_median_pct !== null && row.diff_vs_median_pct > 5
-                        ? 'text-amber-700 font-medium'
-                        : 'text-slate-600'
-                    }`}
-                  >
-                    {row.diff_vs_median_pct !== null
-                      ? `${row.diff_vs_median_pct > 0 ? '+' : ''}${row.diff_vs_median_pct}%`
-                      : 'No peers <2km'}
+                  <td className="py-2 px-4 font-mono-num text-right text-slate-600">
+                    {row.diff_vs_median_pct !== null ? `${row.diff_vs_median_pct > 0 ? '+' : ''}${row.diff_vs_median_pct}%` : 'No recent peers'}
                   </td>
                 </tr>
               ))}
@@ -532,7 +548,7 @@ export const PricingInboxPage: React.FC = () => {
   const { data, refetch, isLoading } = useQuery({
     queryKey: ['pricing-recommendations', activeStoreId],
     queryFn: () => apiFetch<{ recommendations: Array<{
-      id: string; product_id: string; current_price_paise: number;
+      id: string; product_id: string; sku_code: string; product_name: string; current_price_paise: number;
       recommended_price_paise: number; status: string; explanation: string;
     }> }>(`/pricing/stores/${activeStoreId}/recommendations?status=pending`),
     enabled: Boolean(activeStoreId),
@@ -575,7 +591,7 @@ export const PricingInboxPage: React.FC = () => {
           )}
           {(data?.recommendations ?? []).map((row) => (
             <div key={row.id} className="py-4 space-y-2">
-              <p className="text-xs font-semibold text-slate-900">Product reference: {row.product_id}</p>
+              <p className="text-xs font-semibold text-slate-900">{row.sku_code} · {row.product_name}</p>
               <div className="flex flex-wrap gap-4 text-xs text-slate-600">
                 <span>Current: {formatINR(row.current_price_paise)}</span>
                 <span>Recommended: {formatINR(row.recommended_price_paise)}</span>
