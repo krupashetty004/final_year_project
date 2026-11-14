@@ -124,7 +124,7 @@ The GitHub Actions validation workflow checks:
 
 - Frontend: TypeScript, production build and existing Node tests.
 - API: unit tests plus PostgreSQL-backed integration tests covering Alembic migration, SQLite seed import, owner authentication, tenant isolation, inventory reads and shelf-photo review history.
-- Vision: OCR fallback, CLIP cosine-ranking and labelled-evaluation calibration tests without downloading model weights. Full inference/reference-image embedding requires downloading the configured CLIP and YOLO weights on first use.
+- Vision: OCR fallback, CLIP cosine-ranking, labelled-image embedding preparation, YOLO detection-evaluation preparation, and evaluation-metric tests without downloading model weights. Full inference/reference-image embedding requires downloading the configured CLIP and YOLO weights on first use.
 
 Run the checks locally:
 
@@ -176,15 +176,19 @@ The preparation step embeds repeated reference files once and rejects a query im
 
 ### Labelled shelf-region detection evaluation
 
-The region evaluator accepts one JSONL row per image with `image_id`, normalized `ground_truth_boxes` (`[x1, y1, x2, y2]`) and `predicted_boxes` (each with `bbox`, `confidence`, and optional `label`). It reports class-agnostic precision, recall, F1 and AP@IoU0.50 for candidate object regions. This does not measure SKU identity, class correctness or quantity estimation.
+For end-to-end evaluation, prepare a JSONL manifest with one row per real shelf photo: `image_id`, `image_path` (relative to the manifest folder), and normalized `ground_truth_boxes` (`[x1, y1, x2, y2]`). Example:
 
-Run from `services/vision`:
-
-~~~powershell
-python evaluate_detections.py .\data\labelled_shelf_boxes.jsonl --confidence 0.25 --iou 0.50 --output .\reports\region_detection_metrics.json
+~~~json
+{"image_id":"shelf-001","image_path":"images/shelf-001.jpg","ground_truth_boxes":[[0.10,0.12,0.42,0.82],[0.48,0.15,0.76,0.80]]}
 ~~~
 
-Use the AP result only as a class-agnostic object-region localization measure; do not report it as SKU mAP. Real held-out shelf photos and labelled boxes are still needed before the generic YOLO detector can be considered validated.
+Run from `services/vision` to execute the configured YOLO weights on every image and score the predicted regions:
+
+~~~powershell
+python run_detection_eval.py .\data\labelled_shelf_manifest.jsonl --weights yolo11n.pt --inference-confidence 0.001 --score-confidence 0.25 --iou 0.50 --output .\reports\region_detection_metrics.json
+~~~
+
+The script retains low-confidence YOLO proposals for AP calculation, then applies the score confidence threshold to precision/recall/F1. The report measures class-agnostic region localization only; it does not measure SKU identity, class correctness or quantity estimation. Do not report AP@0.50 as SKU mAP. Real held-out shelf photos and labelled boxes are still needed before the generic YOLO detector can be considered validated.
 
 
 
