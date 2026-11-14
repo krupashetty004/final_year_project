@@ -253,6 +253,7 @@ def generate_pricing_recommendations(
             batch_id=batch.id if batch else None,
             current_price_paise=item.selling_price_paise, mrp_paise=item.mrp_paise,
             cost_price_paise=item.cost_price_paise, nearby_median_price_paise=median,
+            demand_signal_price_paise=demand_signal["signal_price_paise"],
             expiry_discount_pct=result["expiry_discount_pct"],
             competition_signal_price_paise=median,
             stock_pressure_factor=stock_pressure,
