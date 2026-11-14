@@ -419,9 +419,9 @@ def confirm_inventory_detection(
             if body.selling_price_paise > item.mrp_paise:
                 raise HTTPException(status_code=422, detail="Selling price cannot exceed MRP")
             margin_floor = (
-                item.cost_price_paise
+                ceil(item.cost_price_paise / 100) * 100
                 if item.clearance_enabled and store.clearance_below_margin_allowed
-                else int(item.cost_price_paise * (1 + item.min_margin_bps / 10000))
+                else ceil(item.cost_price_paise * (1 + item.min_margin_bps / 10000) / 100) * 100
             )
             if body.selling_price_paise < margin_floor:
                 raise HTTPException(status_code=422, detail="Selling price violates the store's minimum margin")
@@ -431,6 +431,9 @@ def confirm_inventory_detection(
         price = body.selling_price_paise or product.mrp_paise
         if price > product.mrp_paise:
             raise HTTPException(status_code=422, detail="Selling price cannot exceed MRP")
+        minimum_price = ceil(product.default_cost_paise * 1.10 / 100) * 100
+        if price < minimum_price:
+            raise HTTPException(status_code=422, detail="Selling price violates the default 10% minimum margin")
         item = StoreInventory(
             store_id=store_id, product_id=product.id, available_qty=body.quantity,
             reserved_qty=Decimal("0"), incoming_qty=Decimal("0"),
