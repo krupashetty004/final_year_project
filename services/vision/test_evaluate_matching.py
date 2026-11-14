@@ -155,3 +155,25 @@ def test_evaluation_reports_top3_recall_and_reciprocal_rank():
     assert report["known_top1_accuracy_before_threshold"] == 0.0
     assert report["known_top3_recall_before_threshold"] == 1.0
     assert report["known_mean_reciprocal_rank_at_3"] == 0.5
+
+
+
+def test_calibration_rejects_empty_or_invalid_threshold_sweep():
+    sample = {
+        "query_id": "known",
+        "expected_product_id": "sku-a",
+        "query_embedding": _vector(1.0, 0.0),
+        "catalogue": [{
+            "product_id": "sku-a",
+            "sku_code": "A",
+            "name": "Product A",
+            "brand": "Brand A",
+            "reference_embeddings": [_vector(1.0, 0.0)],
+        }],
+    }
+    with pytest.raises(ValueError, match="At least one"):
+        evaluate_samples([sample], thresholds=[])
+    with pytest.raises(ValueError, match="finite cosine values"):
+        evaluate_samples([sample], thresholds=[float("nan")])
+    with pytest.raises(ValueError, match="finite cosine values"):
+        evaluate_samples([sample], thresholds=[1.1])
