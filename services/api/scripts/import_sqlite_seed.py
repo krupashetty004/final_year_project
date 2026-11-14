@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, Numeric
+from sqlalchemy import Boolean, Date, DateTime, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID, insert as pg_insert
 
 from app.database.session import Base, engine
@@ -23,7 +23,11 @@ from app.models import entities as _entities  # noqa: F401 - register ORM tables
 
 
 def convert_value(value: Any, column_type: Any) -> Any:
-    if value is None or value == '':
+    if value is None:
+        return None
+    if isinstance(column_type, String):
+        return str(value)
+    if value == "":
         return None
     if isinstance(column_type, PGUUID):
         return value if isinstance(value, UUID) else UUID(str(value))
@@ -34,9 +38,8 @@ def convert_value(value: Any, column_type: Any) -> Any:
             value = value.decode("utf-8")
         return json.loads(value) if value else {}
     if isinstance(column_type, DateTime):
-        if isinstance(value, datetime):
-            return value
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
     if isinstance(column_type, Date):
         if isinstance(value, date):
             return value
@@ -44,6 +47,8 @@ def convert_value(value: Any, column_type: Any) -> Any:
     if isinstance(column_type, Numeric):
         return Decimal(str(value))
     if isinstance(column_type, Boolean):
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "t", "yes", "y"}
         return bool(value)
     return value
 
