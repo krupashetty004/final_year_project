@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.session import Base
@@ -100,7 +101,9 @@ class ProductImage(Base):
     image_url: Mapped[str] = mapped_column(Text, nullable=False)
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     is_reference: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    embedding_model: Mapped[str] = mapped_column(String(64), nullable=False, default="dinov2-small")
+    # PostgreSQL schema already provisions VECTOR(512); null for legacy placeholder rows.
+    embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(512))
+    embedding_model: Mapped[str] = mapped_column(String(64), nullable=False, default="openai/clip-vit-base-patch32")
     ocr_extracted_text: Mapped[Optional[str]] = mapped_column(Text)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
