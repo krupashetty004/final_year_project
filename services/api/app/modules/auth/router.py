@@ -69,8 +69,12 @@ def _session_payload(user: User, stores: list[Store]) -> dict:
         },
         "stores": [{
             "id": str(s.id), "store_code": s.store_code, "name": s.name,
-            "city": s.city, "state": s.state, "pincode": s.pincode,
+            "address": s.address, "city": s.city, "state": s.state,
+            "pincode": s.pincode, "latitude": s.latitude, "longitude": s.longitude,
             "is_verified": s.is_verified,
+            "default_min_margin_bps": s.default_min_margin_bps,
+            "clearance_below_margin_allowed": s.clearance_below_margin_allowed,
+            "is_synthetic": s.is_synthetic,
         } for s in stores],
     }
 
