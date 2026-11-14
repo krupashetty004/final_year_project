@@ -60,6 +60,6 @@ def test_expired_product_is_not_priced():
 def test_infeasible_margin_and_daily_limit_is_rejected():
     with pytest.raises(ValueError):
         recommend_price(PricingInputs(
-            current_price_paise=10000, mrp_paise=12000, cost_price_paise=9900,
+            current_price_paise=10000, mrp_paise=12000, cost_price_paise=10100,
             min_margin_bps=1000,
         ))
