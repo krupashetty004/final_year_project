@@ -152,7 +152,7 @@ def confirm_inventory_detection(
     db: Session = Depends(get_db),
 ) -> dict:
     """Apply owner-confirmed quantity as a stock addition; never infer counts."""
-    require_owned_store(str(store_id), owner, db)
+    store = require_owned_store(str(store_id), owner, db)
     upload = db.scalar(select(InventoryImageUpload).where(
         InventoryImageUpload.id == upload_id,
         InventoryImageUpload.store_id == store_id,
@@ -183,6 +183,13 @@ def confirm_inventory_detection(
         if body.selling_price_paise is not None:
             if body.selling_price_paise > item.mrp_paise:
                 raise HTTPException(status_code=422, detail="Selling price cannot exceed MRP")
+            margin_floor = (
+                item.cost_price_paise
+                if item.clearance_enabled and store.clearance_below_margin_allowed
+                else int(item.cost_price_paise * (1 + item.min_margin_bps / 10000))
+            )
+            if body.selling_price_paise < margin_floor:
+                raise HTTPException(status_code=422, detail="Selling price violates the store's minimum margin")
             item.selling_price_paise = body.selling_price_paise
         item.version += 1
     else:
@@ -199,6 +206,7 @@ def confirm_inventory_detection(
             is_listed=True, clearance_enabled=False, version=1,
         )
         db.add(item)
+    db.flush()
     if body.expiry_date:
         if body.expiry_date <= date.today():
             raise HTTPException(status_code=422, detail="Expiry date must be in the future")
