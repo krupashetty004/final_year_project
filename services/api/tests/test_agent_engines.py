@@ -99,3 +99,17 @@ def test_rolling_origin_backtest_rejects_invalid_inputs():
         rolling_origin_backtest([1.0] * 40, min_train_days=6)
     with pytest.raises(ValueError):
         rolling_origin_backtest([1.0, float("nan")] + [1.0] * 38)
+
+
+
+def test_rolling_origin_does_not_rank_a_baseline_from_one_window():
+    result = rolling_origin_backtest(
+        [4.0] * 35,
+        horizon_days=7,
+        min_train_days=28,
+        step_days=7,
+    )
+    assert result["origin_count"] == 1
+    assert result["minimum_origins_for_ranking"] == 3
+    assert result["best_baseline_by_wape"] is None
+    assert all(not metrics["ranking_eligible"] for metrics in result["models"].values())
