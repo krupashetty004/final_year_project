@@ -27,7 +27,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 ### Still incomplete for O1
 
 - YOLO11 is currently a **generic pretrained object detector**, not a grocery-packaging detector trained/evaluated on the target product set.
-- The CLIP reference-image path is implemented. A labelled evaluation utility now reports top-1 SKU accuracy, matching precision/recall, unknown-item rejection, and a threshold recommendation. No store reference-photo collection or labelled shelf-image evaluation data has been supplied yet, so the 0.58 cosine threshold remains provisional and no real-world accuracy claim is available.
+- The CLIP reference-image path is implemented. A labelled evaluation utility now reports top-1 SKU accuracy, top-3 recall, mean reciprocal rank at 3, matching precision/recall, unknown-item rejection, and a threshold recommendation. No store reference-photo collection or labelled shelf-image evaluation data has been supplied yet, so the 0.58 cosine threshold remains provisional and no real-world accuracy claim is available.
 - The model does not reliably count hidden, stacked or occluded products. Physical quantity confirmation remains mandatory.
 - Advanced forecasting (LightGBM, N-HiTS), production model selection and external validation on representative real-store sales are not implemented. Current rolling-origin metrics reflect only the selected store's available history and can include synthetic seed data.
 - There is no validated production dataset or measured real-world shelf detection/SKU matching accuracy. CLIP similarity scores are ranking signals, not calibrated probabilities.
