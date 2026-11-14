@@ -157,6 +157,19 @@ python evaluate_matching.py .\data\labelled_shelf_embeddings.jsonl --output .\re
 
 Each sample must contain `query_id`, `expected_product_id`, a 512-value `query_embedding`, and a `catalogue` list whose products include `product_id`, `sku_code`, and `reference_embeddings` (a list of 512-value vectors). Set `expected_product_id` to JSON `null` for a genuinely unknown/unlisted item. Use representative lighting, angles, packaging variants and unknown products. Keep a separate held-out test set: calibration-set metrics are not final test accuracy. The report explicitly treats cosine similarity as a ranking score, not a probability.
 
+### Labelled shelf-region detection evaluation
+
+The region evaluator accepts one JSONL row per image with `image_id`, normalized `ground_truth_boxes` (`[x1, y1, x2, y2]`) and `predicted_boxes` (each with `bbox`, `confidence`, and optional `label`). It reports class-agnostic precision, recall, F1 and AP@IoU0.50 for candidate object regions. This does not measure SKU identity, class correctness or quantity estimation.
+
+Run from `services/vision`:
+
+~~~powershell
+python evaluate_detections.py .\data\labelled_shelf_boxes.jsonl --confidence 0.25 --iou 0.50 --output .\reports\region_detection_metrics.json
+~~~
+
+Use the AP result only as a class-agnostic object-region localization measure; do not report it as SKU mAP. Real held-out shelf photos and labelled boxes are still needed before the generic YOLO detector can be considered validated.
+
+
 
 ## Important security, data and deployment limitations
 
