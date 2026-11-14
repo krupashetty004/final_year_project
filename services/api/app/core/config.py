@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
     VISION_SERVICE_URL: str = "http://localhost:8001"
+    VISION_UNKNOWN_SIMILARITY_THRESHOLD: float = 0.58
     GEMINI_API_KEY: str = ""
     SYNTHETIC_SEED: int = 42
 
