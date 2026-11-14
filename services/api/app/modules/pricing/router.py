@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
 from app.models.entities import (
-    CompetitorPrice, OwnerApproval, PriceHistory, PricingRecommendation,
+    CompetitorPrice, OwnerApproval, PriceHistory, PricingRecommendation, Product,
     StockBatch, Store, StoreInventory, User,
 )
 from app.modules.pricing.engine import PricingInputs, recommend_price
@@ -37,6 +37,59 @@ def pricing_module_status() -> dict:
             "maximum +/-10% price movement", "one approved change per SKU per day",
             "whole-rupee rounding", "no personalized pricing", "owner approval required",
         ],
+    }
+
+
+
+
+@router.get("/stores/{store_id}/competitor-comparison")
+def competitor_comparison(
+    store_id: UUID,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    now = datetime.now(timezone.utc)
+    peer_ids = db.scalars(
+        select(CompetitorPrice.competitor_store_id).where(
+            CompetitorPrice.is_verified.is_(True),
+            CompetitorPrice.distance_km <= 2,
+            CompetitorPrice.observed_at_utc >= now - timedelta(days=30),
+        ).distinct()
+    ).all()
+    inventory = db.scalars(select(StoreInventory).where(
+        StoreInventory.store_id == store_id,
+    ).order_by(StoreInventory.product_id)).all()
+    comparisons = []
+    for item in inventory:
+        values = sorted(int(value) for value in db.scalars(
+            select(CompetitorPrice.selling_price_paise).where(
+                CompetitorPrice.product_id == item.product_id,
+                CompetitorPrice.is_verified.is_(True),
+                CompetitorPrice.distance_km <= 2,
+                CompetitorPrice.observed_at_utc >= now - timedelta(days=30),
+            )
+        ).all())
+        median = None
+        if values:
+            middle = len(values) // 2
+            median = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) // 2
+        product = db.get(Product, item.product_id)
+        diff = round((item.selling_price_paise - median) / median * 100, 2) if median else None
+        comparisons.append({
+            "product_id": str(item.product_id),
+            "sku_code": product.sku_code if product else "",
+            "name": product.name if product else "",
+            "selling_price_paise": item.selling_price_paise,
+            "mrp_paise": item.mrp_paise,
+            "nearby_verified_stores": len(values),
+            "nearby_median_paise": median,
+            "diff_vs_median_pct": diff,
+        })
+    return {
+        "store_id": str(store_id), "radius_km": 2.0,
+        "nearby_verified_store_count": len(peer_ids),
+        "comparisons": comparisons,
     }
 
 
@@ -144,6 +197,8 @@ def list_recommendations(
     rows = db.scalars(stmt.order_by(PricingRecommendation.created_at_utc.desc()).limit(200)).all()
     return {"recommendations": [
         {"id": str(r.id), "product_id": str(r.product_id),
+         "sku_code": (db.get(Product, r.product_id).sku_code if db.get(Product, r.product_id) else ""),
+         "product_name": (db.get(Product, r.product_id).name if db.get(Product, r.product_id) else ""),
          "current_price_paise": r.current_price_paise,
          "recommended_price_paise": r.recommended_price_paise,
          "status": r.status, "explanation": r.explanation}
