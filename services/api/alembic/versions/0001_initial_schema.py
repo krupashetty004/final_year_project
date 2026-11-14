@@ -14,7 +14,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    sql_path = Path(__file__).resolve().parents[3] / "database" / "migrations" / "0001_initial_schema.sql"
+    filename = Path("database/migrations/0001_initial_schema.sql")
+    candidates = [Path.cwd() / filename]
+    candidates.extend(parent / filename for parent in Path(__file__).resolve().parents)
+    sql_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if sql_path is None:
+        raise FileNotFoundError(
+            "Could not locate database/migrations/0001_initial_schema.sql. "
+            "Run Alembic from the API directory with the repository database folder mounted."
+        )
     op.execute(sql_path.read_text(encoding="utf-8"))
 
 
