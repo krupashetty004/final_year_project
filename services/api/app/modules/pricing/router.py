@@ -253,9 +253,9 @@ def decide_recommendation(
     if final_price > rec.mrp_paise:
         raise HTTPException(status_code=422, detail="Approved price cannot exceed MRP")
     min_price = (
-        item.cost_price_paise
+        ceil(item.cost_price_paise / 100) * 100
         if item.clearance_enabled and store.clearance_below_margin_allowed
-        else ceil(item.cost_price_paise * (1 + item.min_margin_bps / 10000))
+        else ceil(item.cost_price_paise * (1 + item.min_margin_bps / 10000) / 100) * 100
     )
     if final_price < min_price:
         raise HTTPException(status_code=422, detail="Approved price violates minimum margin")
