@@ -12,7 +12,9 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - Store inventory listing and editing with quantity constraints, MRP and margin checks, version-based conflict detection, and price history.
 - Batch and expiry ledger.
 - Shelf-photo upload endpoint (JPEG/PNG/WebP, maximum 10 MB) with local file persistence.
-- Generic YOLO11 object-region detection, crop-level EasyOCR, and OCR-text-to-catalogue candidate ranking.
+- Generic YOLO11 object-region detection and crop-level EasyOCR.
+- Owner-uploaded real SKU reference photos are embedded with openai/clip-vit-base-patch32 (512-D, L2-normalized) and stored in the existing PostgreSQL pgvector column.
+- Detected image crops are ranked against the selected store's and global SKU reference vectors using cosine similarity; OCR text matching is the fallback when references are absent or do not clear the preliminary similarity threshold.
 - Unknown detections remain unassigned; they are not automatically forced to a SKU.
 - Owner review UI can select/correct a SKU, confirm or reject a detection, enter the physically counted quantity, and optionally enter an expiry date and selling price.
 - Only owner-confirmed quantities change inventory. Confirm/reject decisions are recorded in owner approvals.
@@ -23,10 +25,10 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 ### Still incomplete for O1
 
 - YOLO11 is currently a **generic pretrained object detector**, not a grocery-packaging detector trained/evaluated on the target product set.
-- Product matching currently uses OCR text similarity. DINOv2/CLIP embeddings and vector retrieval are not implemented.
+- The CLIP reference-image path is now implemented, but no store reference-photo collection or labelled shelf-image evaluation has been supplied yet. The 0.58 cosine threshold is provisional and is not a measured confidence threshold.
 - The model does not reliably count hidden, stacked or occluded products. Physical quantity confirmation remains mandatory.
 - Advanced forecasting (Croston/TSB, LightGBM, N-HiTS), rolling-origin evaluation, accuracy reporting and model selection are not implemented.
-- There is no validated production dataset or measured real-world shelf detection/SKU matching accuracy.
+- There is no validated production dataset or measured real-world shelf detection/SKU matching accuracy. CLIP similarity scores are ranking signals, not calibrated probabilities.
 
 ## Objective 2 — Smart Pricing Agent
 
@@ -96,6 +98,8 @@ Use this seeded account after the PostgreSQL import. Do not use it for real data
 - GET /api/v1/inventory/stores/{store_id}/inventory
 - PATCH /api/v1/inventory/stores/{store_id}/inventory/{inventory_id}
 - GET /api/v1/inventory/stores/{store_id}/images (owner-only review history)
+- POST /api/v1/inventory/stores/{store_id}/products/{product_id}/reference-images (upload real SKU reference photo)
+- GET /api/v1/inventory/stores/{store_id}/products/{product_id}/reference-images
 - POST /api/v1/inventory/stores/{store_id}/images/analyze
 - POST /api/v1/inventory/stores/{store_id}/images/{upload_id}/detections/{detection_id}/confirm
 - POST /api/v1/inventory/stores/{store_id}/images/{upload_id}/detections/{detection_id}/reject
@@ -116,7 +120,7 @@ The GitHub Actions validation workflow checks:
 
 - Frontend: TypeScript, production build and existing Node tests.
 - API: unit tests plus PostgreSQL-backed integration tests covering Alembic migration, SQLite seed import, owner authentication, tenant isolation, inventory reads and shelf-photo review history.
-- Vision: OCR catalogue-matching utility tests without downloading model weights.
+- Vision: OCR fallback and CLIP cosine-ranking tests without downloading model weights. Full inference/reference-image embedding requires downloading the configured CLIP and YOLO weights on first use.
 
 Run the checks locally:
 
