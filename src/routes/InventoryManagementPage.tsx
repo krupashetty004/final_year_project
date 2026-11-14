@@ -53,7 +53,7 @@ export const InventoryManagementPage: React.FC = () => {
     queryKey: ['inventory', activeStoreId, search, filter],
     queryFn: () =>
       apiFetch<{ items: InventoryRow[] }>(
-        `/stores/${activeStoreId}/inventory?search=${encodeURIComponent(search)}&filter=${filter}`,
+        `/inventory/stores/${activeStoreId}/inventory?search=${encodeURIComponent(search)}&filter=${filter}`,
       ),
     enabled: Boolean(activeStoreId),
   });
@@ -66,7 +66,7 @@ export const InventoryManagementPage: React.FC = () => {
       selling_price_paise: number;
       version: number;
     }) =>
-      apiFetch(`/stores/${activeStoreId}/inventory/${payload.inventoryId}`, {
+      apiFetch(`/inventory/stores/${activeStoreId}/inventory/${payload.inventoryId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           available_qty: payload.available_qty,
