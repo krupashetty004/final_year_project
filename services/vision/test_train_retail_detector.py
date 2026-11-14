@@ -56,14 +56,17 @@ def test_training_runner_saves_best_checkpoint_and_reports_validation(tmp_path):
     class FakeYolo:
         def __init__(self, weights):
             self.weights = weights
+            self.trainer = None
 
         def train(self, **kwargs):
             calls.append(("train", kwargs))
-            save_dir = Path(kwargs["project"]) / kwargs["name"]
+            # Simulate Ultralytics choosing an incremented run directory.
+            save_dir = Path(kwargs["project"]) / f"{kwargs['name']}2"
             weights_dir = save_dir / "weights"
             weights_dir.mkdir(parents=True)
             (weights_dir / "best.pt").write_bytes(b"fake-checkpoint")
-            return SimpleNamespace(save_dir=str(save_dir))
+            self.trainer = SimpleNamespace(save_dir=str(save_dir))
+            return {"metrics": "training-complete"}
 
         def val(self, **kwargs):
             calls.append(("val", kwargs))
