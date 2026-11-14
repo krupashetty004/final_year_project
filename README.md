@@ -19,7 +19,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - Owner review UI can select/correct a SKU, confirm or reject a detection, enter the physically counted quantity, and optionally enter an expiry date and selling price.
 - Only owner-confirmed quantities change inventory. Confirm/reject decisions are recorded in owner approvals.
 - Moving-average, seven-day seasonal-naive and Croston-TSB intermittent-demand baselines.
-- Expanding-window rolling-origin evaluation for all three baselines, reporting horizon-level MAE, WAPE and forecast bias.
+- Expanding-window rolling-origin evaluation for all three baselines, reporting horizon-level MAE, WAPE and forecast bias. Synthetic seed sales are excluded from this accuracy endpoint by default; they can be explicitly included for development checks and are marked in the report.
 - Reorder-point calculation using lead-time demand plus safety stock, with supplier pack-size rounding.
 - Reorder suggestions support moving-average, seasonal-naive, Croston-TSB or per-SKU auto-selection by rolling-origin WAPE. Auto-selection requires at least three evaluation windows and falls back to moving average when evidence is insufficient.
 - Reorder suggestions support owner accept/edit/reject. Approval does not automatically place a purchase order.
@@ -29,7 +29,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - YOLO11 is currently a **generic pretrained object detector**, not a grocery-packaging detector trained/evaluated on the target product set.
 - The CLIP reference-image path is implemented. A labelled evaluation utility now reports top-1 SKU accuracy, top-3 recall, mean reciprocal rank at 3, matching precision/recall, unknown-item rejection, and a threshold recommendation. No store reference-photo collection or labelled shelf-image evaluation data has been supplied yet, so the 0.58 cosine threshold remains provisional and no real-world accuracy claim is available.
 - The model does not reliably count hidden, stacked or occluded products. Physical quantity confirmation remains mandatory.
-- Advanced forecasting (LightGBM, N-HiTS), production model selection and external validation on representative real-store sales are not implemented. Current rolling-origin metrics reflect only the selected store's available history and can include synthetic seed data.
+- Advanced forecasting (LightGBM, N-HiTS), production model selection and external validation on representative real-store sales are not implemented. Current rolling-origin metrics reflect only the selected store's non-synthetic sales by default. A development-only query option can include synthetic rows, which are explicitly marked.
 - There is no validated production dataset or measured real-world shelf detection/SKU matching accuracy. CLIP similarity scores are ranking signals, not calibrated probabilities.
 
 ## Objective 2 — Smart Pricing Agent
@@ -107,7 +107,7 @@ Use this seeded account after the PostgreSQL import. Do not use it for real data
 - POST /api/v1/inventory/stores/{store_id}/images/{upload_id}/detections/{detection_id}/confirm
 - POST /api/v1/inventory/stores/{store_id}/images/{upload_id}/detections/{detection_id}/reject
 - GET /api/v1/forecasting/stores/{store_id}/products/{product_id}/forecast
-- GET /api/v1/forecasting/stores/{store_id}/products/{product_id}/backtest
+- GET /api/v1/forecasting/stores/{store_id}/products/{product_id}/backtest (real sales only by default; use `include_synthetic=true` for development checks)
 - POST /api/v1/forecasting/stores/{store_id}/reorder-suggestions/generate
 - GET /api/v1/forecasting/stores/{store_id}/reorder-suggestions
 - POST /api/v1/forecasting/stores/{store_id}/reorder-suggestions/{suggestion_id}/decision
