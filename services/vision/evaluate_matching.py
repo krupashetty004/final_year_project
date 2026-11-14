@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -160,10 +159,6 @@ def evaluate_samples(
         calibration_status = "calibrated_on_supplied_labels"
 
     baseline = _threshold_metrics(prepared, 0.58)
-    known_top1 = [
-        row for row in prepared
-        if row["expected_product_id"] is not None and row["top_product_id"] is not None
-    ]
     rank_correct = sum(
         row["top_product_id"] == row["expected_product_id"]
         for row in known_top1
