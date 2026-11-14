@@ -23,9 +23,12 @@ class StoreSummary(BaseModel):
     id: uuid.UUID
     store_code: str
     name: str
+    address: str
     city: str
     state: str
     pincode: str
+    latitude: float
+    longitude: float
     is_verified: bool
     default_min_margin_bps: int
     clearance_below_margin_allowed: bool
