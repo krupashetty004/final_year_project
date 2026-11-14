@@ -359,7 +359,7 @@ export const DetectionReviewPage: React.FC = () => {
         <Card>
           <CardContent>
             <p className="py-3 text-xs text-slate-500">No shelf-photo analyses have been recorded for this store.</p>
-            <Link to="/inventory" className="text-xs font-medium text-teal-800 underline">Open inventory to start a shelf-photo analysis</Link>
+            <Link to="/upload-photo" className="text-xs font-medium text-teal-800 underline">Open shelf-photo upload to start an analysis</Link>
           </CardContent>
         </Card>
       )}
@@ -490,7 +490,7 @@ export const ReferenceImagesPage: React.FC = () => {
       <Card>
         <CardHeader>
           <h3 className="font-display text-sm font-semibold text-slate-900">
-            Registered Master SKU Reference Registry (Sample 20 of {data?.total ?? 800})
+            Seeded Product-Image Metadata Registry (Sample 20 of {data?.total ?? 800})
           </h3>
         </CardHeader>
         <div className="overflow-x-auto">
@@ -511,7 +511,7 @@ export const ReferenceImagesPage: React.FC = () => {
                   <td className="py-2 px-4 font-medium text-slate-900">{p.name}</td>
                   <td className="py-2 px-4 text-slate-700">{p.brand}</td>
                   <td className="py-2 px-4 text-slate-600">{p.category}</td>
-                  <td className="py-2 px-4 font-mono-num text-slate-500">OCR catalogue matching · embeddings pending</td>
+                  <td className="py-2 px-4 font-mono-num text-slate-500">Placeholder image path · no vector indexed</td>
                 </tr>
               ))}
             </tbody>
