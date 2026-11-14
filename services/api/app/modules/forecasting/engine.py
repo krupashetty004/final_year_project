@@ -1,8 +1,8 @@
 """Deterministic demand forecasting and reorder calculations.
 
-These baselines intentionally avoid training-data claims. They are suitable for
-small-store histories and provide a stable fallback until model backtesting is
-available.
+These baselines intentionally avoid training-data claims. Rolling-origin
+backtesting compares their historical errors; advanced trained models and
+production model selection remain separate tasks.
 """
 from __future__ import annotations
 
