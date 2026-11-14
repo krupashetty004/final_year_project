@@ -134,6 +134,19 @@ def _ocr_reader():
     return easyocr.Reader(languages or ["en"], gpu=False)
 
 
+def _clip_feature_tensor(features: Any) -> Any:
+    """Extract projected image features across Transformers return conventions."""
+    image_embeds = getattr(features, "image_embeds", None)
+    if image_embeds is not None:
+        return image_embeds
+    pooler_output = getattr(features, "pooler_output", None)
+    if pooler_output is not None:
+        return pooler_output
+    if isinstance(features, (tuple, list)) and features:
+        return features[0]
+    return features
+
+
 @lru_cache(maxsize=1)
 def _clip_components():
     """Load the 512-dimensional CLIP model once per worker process."""
@@ -153,10 +166,7 @@ def _embed_pil_image(image: Image.Image) -> tuple[list[float], str]:
     inputs = processor(images=image.convert("RGB"), return_tensors="pt")
     with torch.inference_mode():
         features = model.get_image_features(pixel_values=inputs["pixel_values"])
-        if hasattr(features, "image_embeds"):
-            features = features.image_embeds
-        elif isinstance(features, (tuple, list)):
-            features = features[0]
+        features = _clip_feature_tensor(features)
         features = torch.nn.functional.normalize(features, p=2, dim=-1)
     embedding = [float(value) for value in features[0].cpu().tolist()]
     if len(embedding) != EMBEDDING_DIMENSION:
