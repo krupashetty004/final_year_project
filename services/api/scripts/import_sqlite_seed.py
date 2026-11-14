@@ -95,7 +95,7 @@ def import_seed(sqlite_path: Path) -> dict[str, int]:
 
 
 if __name__ == "__main__":
-    default_path = Path(__file__).resolve().parents[2] / "database" / "retail_connect.sqlite"
+    default_path = Path(__file__).resolve().parents[3] / "database" / "retail_connect.sqlite"
     # The database volume is mounted at /app/database in Docker. Local execution
     # from services/api resolves to the repository database folder above.
     sqlite_path = Path("./database/retail_connect.sqlite")
