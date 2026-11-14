@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from math import ceil, isfinite
+from math import isfinite
 import json
 from pathlib import Path
 from uuid import UUID, uuid4
