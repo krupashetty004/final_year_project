@@ -237,6 +237,8 @@ def update_store_inventory(
     item.selling_price_paise = body.selling_price_paise
     item.version += 1
     if item.selling_price_paise != old_price:
+        now = datetime.now(timezone.utc)
+        item.last_price_changed_at_utc = now
         db.add(PriceHistory(
             store_id=store_id, product_id=item.product_id,
             old_price_paise=old_price, new_price_paise=item.selling_price_paise,
@@ -673,6 +675,7 @@ def confirm_inventory_detection(
     old_qty = Decimal("0")
     if item:
         old_qty = Decimal(item.available_qty)
+        old_price = item.selling_price_paise
         new_qty = old_qty + body.quantity
         if new_qty < Decimal(item.reserved_qty):
             raise HTTPException(status_code=422, detail="New available stock cannot be below reserved quantity")
@@ -688,6 +691,15 @@ def confirm_inventory_detection(
             if body.selling_price_paise < margin_floor:
                 raise HTTPException(status_code=422, detail="Selling price violates the store's minimum margin")
             item.selling_price_paise = body.selling_price_paise
+            if item.selling_price_paise != old_price:
+                now = datetime.now(timezone.utc)
+                item.last_price_changed_at_utc = now
+                db.add(PriceHistory(
+                    store_id=store_id, product_id=item.product_id,
+                    old_price_paise=old_price, new_price_paise=item.selling_price_paise,
+                    mrp_paise=item.mrp_paise, change_source="owner_shelf_photo",
+                    changed_by_user_id=owner.id,
+                ))
         item.version += 1
     else:
         price = body.selling_price_paise or product.mrp_paise
