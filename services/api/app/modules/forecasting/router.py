@@ -2,12 +2,13 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
-from app.models.entities import Product, ReorderSuggestion, Sale, StoreInventory, Supplier, User
+from app.models.entities import OwnerApproval, Product, ReorderSuggestion, Sale, StoreInventory, Supplier, User
 from app.modules.forecasting.engine import calculate_reorder, forecast_demand
 
 router = APIRouter(prefix="/forecasting", tags=["forecasting"])
@@ -144,3 +145,78 @@ def generate_reorder_suggestions(
             for s in created
         ],
     }
+
+
+
+class ReorderDecisionBody(BaseModel):
+    decision: str = Field(pattern="^(accepted|edited|rejected)$")
+    final_qty: float | None = Field(default=None, gt=0)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/stores/{store_id}/reorder-suggestions")
+def list_reorder_suggestions(
+    store_id: UUID,
+    status: str = Query(default="pending", pattern="^(pending|accepted|edited|rejected|all)$"),
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    stmt = select(ReorderSuggestion).where(ReorderSuggestion.store_id == store_id)
+    if status != "all":
+        stmt = stmt.where(ReorderSuggestion.status == status)
+    rows = db.scalars(stmt.order_by(ReorderSuggestion.created_at_utc.desc()).limit(200)).all()
+    return {"suggestions": [
+        {
+            "id": str(row.id), "product_id": str(row.product_id),
+            "current_available_qty": float(row.current_available_qty),
+            "suggested_qty": float(row.rounded_suggested_qty),
+            "supplier_pack_size": float(row.supplier_pack_size),
+            "estimated_cost_paise": row.estimated_cost_paise,
+            "explanation": row.explanation, "status": row.status,
+        }
+        for row in rows
+    ]}
+
+
+@router.post("/stores/{store_id}/reorder-suggestions/{suggestion_id}/decision")
+def decide_reorder_suggestion(
+    store_id: UUID,
+    suggestion_id: UUID,
+    body: ReorderDecisionBody,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    row = db.scalar(select(ReorderSuggestion).where(
+        ReorderSuggestion.id == suggestion_id,
+        ReorderSuggestion.store_id == store_id,
+    ).with_for_update())
+    if not row:
+        raise HTTPException(status_code=404, detail="Reorder suggestion not found")
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="Suggestion has already been decided")
+    original = {"suggested_qty": str(row.rounded_suggested_qty)}
+    final_qty = None
+    decision = body.decision
+    if decision == "rejected":
+        row.status = "rejected"
+    else:
+        final_qty = float(body.final_qty if decision == "edited" else row.rounded_suggested_qty)
+        pack = float(row.supplier_pack_size)
+        if abs((final_qty / pack) - round(final_qty / pack)) > 1e-8:
+            raise HTTPException(status_code=422, detail="Final quantity must be a multiple of supplier pack size")
+        row.owner_final_qty = final_qty
+        row.status = "accepted" if decision == "accepted" else "edited"
+    now = datetime.now(timezone.utc)
+    row.decided_at_utc = now
+    db.add(OwnerApproval(
+        store_id=store_id, user_id=owner.id,
+        entity_type="reorder_suggestion", entity_id=row.id,
+        decision=row.status, original_value_json=original,
+        final_value_json={"final_qty": str(final_qty)} if final_qty is not None else {},
+        notes=body.notes,
+    ))
+    db.commit()
+    return {"id": str(row.id), "status": row.status, "owner_final_qty": final_qty,
+            "purchase_order_created": False}
