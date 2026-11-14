@@ -313,6 +313,62 @@ async def analyze_inventory_photo(
         raise HTTPException(status_code=502, detail=f"Vision analysis failed; photo retained for retry: {exc}")
 
 
+
+
+class RejectDetectionBody(BaseModel):
+    notes: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/stores/{store_id}/images/{upload_id}/detections/{detection_id}/reject")
+def reject_inventory_detection(
+    store_id: UUID,
+    upload_id: UUID,
+    detection_id: UUID,
+    body: RejectDetectionBody,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    upload = db.scalar(select(InventoryImageUpload).where(
+        InventoryImageUpload.id == upload_id,
+        InventoryImageUpload.store_id == store_id,
+    ))
+    detection = db.scalar(select(DetectedProduct).where(
+        DetectedProduct.id == detection_id,
+        DetectedProduct.upload_id == upload_id,
+    ).with_for_update())
+    if not upload or not detection:
+        raise HTTPException(status_code=404, detail="Photo upload or detection not found")
+    if detection.owner_action != "pending":
+        raise HTTPException(status_code=409, detail="This detection has already been reviewed")
+    now = datetime.now(timezone.utc)
+    detection.owner_action = "rejected"
+    detection.reviewed_at_utc = now
+    db.add(OwnerApproval(
+        store_id=store_id, user_id=owner.id,
+        entity_type="detected_product", entity_id=detection.id,
+        decision="rejected",
+        original_value_json={"top_matches": detection.top_matches_json or []},
+        final_value_json={"rejected": True},
+        notes=body.notes,
+    ))
+    pending = db.scalar(select(DetectedProduct.id).where(
+        DetectedProduct.upload_id == upload_id,
+        DetectedProduct.owner_action == "pending",
+        DetectedProduct.id != detection.id,
+    ).limit(1))
+    if not pending:
+        upload.status = "confirmed"
+    db.commit()
+    return {
+        "upload_id": str(upload_id),
+        "detection_id": str(detection.id),
+        "owner_action": detection.owner_action,
+        "upload_status": upload.status,
+        "inventory_changed": False,
+    }
+
+
 class ConfirmDetectionBody(BaseModel):
     product_id: UUID
     quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
