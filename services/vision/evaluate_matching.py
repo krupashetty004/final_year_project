@@ -141,7 +141,12 @@ def evaluate_samples(
     if thresholds is None:
         scores = [row["top_score"] for row in prepared if row["top_score"] is not None]
         thresholds = sorted({0.0, 1.0, *(round(score, 4) for score in scores)})
-    candidate_metrics = [_threshold_metrics(prepared, float(value)) for value in thresholds]
+    threshold_values = [float(value) for value in thresholds]
+    if not threshold_values:
+        raise ValueError("At least one calibration threshold is required")
+    if any(not math.isfinite(value) or not -1.0 <= value <= 1.0 for value in threshold_values):
+        raise ValueError("Calibration thresholds must be finite cosine values in [-1, 1]")
+    candidate_metrics = [_threshold_metrics(prepared, value) for value in threshold_values]
 
     best = None
     calibration_status = "insufficient_label_classes"
