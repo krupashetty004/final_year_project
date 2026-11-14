@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from math import ceil
 import json
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -14,8 +15,8 @@ from app.core.config import get_settings
 from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
 from app.models.entities import (
-    DetectedProduct, InventoryImageUpload, OwnerApproval, Product, StockBatch,
-    StoreInventory, Store, User,
+    DetectedProduct, InventoryImageUpload, OwnerApproval, PriceHistory, Product, StockBatch,
+    StoreInventory, Store, Supplier, User,
 )
 from app.schemas.common import ProductRead, StoreSummary
 
@@ -57,6 +58,178 @@ def get_store_inventory_summary(store_id: UUID, db: Session = Depends(get_db)) -
         "low_stock_products": low_stock,
         "out_of_stock_products": out_of_stock,
     }
+
+
+
+
+class InventoryUpdateBody(BaseModel):
+    available_qty: Decimal = Field(ge=0, max_digits=12, decimal_places=3)
+    reserved_qty: Decimal = Field(ge=0, max_digits=12, decimal_places=3)
+    selling_price_paise: int = Field(gt=0)
+    version: int = Field(ge=1)
+
+
+@router.get("/stores/{store_id}/inventory")
+def list_store_inventory(
+    store_id: UUID,
+    search: str = Query(default="", max_length=120),
+    filter: str = Query(default="all", pattern="^(all|low_stock|out_of_stock|expiring_soon|loose)$"),
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    stmt = (
+        select(StoreInventory, Product)
+        .join(Product, Product.id == StoreInventory.product_id)
+        .where(StoreInventory.store_id == store_id)
+    )
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(
+            Product.sku_code.ilike(pattern)
+            | Product.name.ilike(pattern)
+            | Product.brand.ilike(pattern)
+        )
+    if filter == "low_stock":
+        stmt = stmt.where(
+            StoreInventory.available_qty > 0,
+            StoreInventory.available_qty <= StoreInventory.reorder_point_qty,
+        )
+    elif filter == "out_of_stock":
+        stmt = stmt.where(StoreInventory.available_qty == 0)
+    elif filter == "loose":
+        stmt = stmt.where(Product.is_loose_commodity.is_(True))
+    elif filter == "expiring_soon":
+        # Filter after joining the batch rows below to avoid dialect-specific
+        # date arithmetic in the stock inventory query.
+        pass
+    rows = db.execute(stmt.order_by(Product.sku_code)).all()
+    items = []
+    cutoff = date.today() + timedelta(days=7)
+    for inventory, product in rows:
+        batch = db.scalar(
+            select(StockBatch).where(
+                StockBatch.store_id == store_id,
+                StockBatch.product_id == product.id,
+                StockBatch.remaining_qty > 0,
+                StockBatch.expiry_date.is_not(None),
+            ).order_by(StockBatch.expiry_date).limit(1)
+        )
+        nearest_expiry = batch.expiry_date if batch else None
+        if filter == "expiring_soon" and not (
+            nearest_expiry and date.today() <= nearest_expiry <= cutoff
+        ):
+            continue
+        supplier = db.get(Supplier, inventory.supplier_id) if inventory.supplier_id else None
+        items.append({
+            "id": str(inventory.id),
+            "product_id": str(product.id),
+            "sku_code": product.sku_code,
+            "name": product.name,
+            "brand": product.brand,
+            "category": product.category,
+            "available_qty": float(inventory.available_qty),
+            "reserved_qty": float(inventory.reserved_qty),
+            "incoming_qty": float(inventory.incoming_qty),
+            "unit_type": inventory.unit_type,
+            "selling_price_paise": inventory.selling_price_paise,
+            "cost_price_paise": inventory.cost_price_paise,
+            "mrp_paise": inventory.mrp_paise,
+            "reorder_point_qty": float(inventory.reorder_point_qty),
+            "supplier_name": supplier.name if supplier else None,
+            "lead_time_days": supplier.lead_time_days if supplier else None,
+            "nearest_expiry_date": nearest_expiry.isoformat() if nearest_expiry else None,
+            "is_loose_commodity": int(product.is_loose_commodity),
+            "clearance_enabled": int(inventory.clearance_enabled),
+            "version": inventory.version,
+        })
+    return {"items": items}
+
+
+@router.patch("/stores/{store_id}/inventory/{inventory_id}")
+def update_store_inventory(
+    store_id: UUID,
+    inventory_id: UUID,
+    body: InventoryUpdateBody,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    store = require_owned_store(str(store_id), owner, db)
+    item = db.scalar(select(StoreInventory).where(
+        StoreInventory.id == inventory_id,
+        StoreInventory.store_id == store_id,
+    ).with_for_update())
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    if item.version != body.version:
+        raise HTTPException(status_code=409, detail="Inventory was changed by another request; refresh and retry")
+    if body.reserved_qty > body.available_qty:
+        raise HTTPException(status_code=422, detail="Reserved quantity cannot exceed available quantity")
+    if body.selling_price_paise > item.mrp_paise:
+        raise HTTPException(status_code=422, detail="Selling price cannot exceed MRP")
+    margin_floor = (
+        ceil(item.cost_price_paise / 100) * 100
+        if item.clearance_enabled and store.clearance_below_margin_allowed
+        else ceil(item.cost_price_paise * (1 + item.min_margin_bps / 10000) / 100) * 100
+    )
+    if body.selling_price_paise < margin_floor:
+        raise HTTPException(status_code=422, detail="Selling price violates the configured minimum margin")
+    old_price = item.selling_price_paise
+    item.available_qty = body.available_qty
+    item.reserved_qty = body.reserved_qty
+    item.selling_price_paise = body.selling_price_paise
+    item.version += 1
+    if item.selling_price_paise != old_price:
+        db.add(PriceHistory(
+            store_id=store_id, product_id=item.product_id,
+            old_price_paise=old_price, new_price_paise=item.selling_price_paise,
+            mrp_paise=item.mrp_paise, change_source="owner_manual",
+            changed_by_user_id=owner.id,
+        ))
+    db.commit()
+    return {
+        "id": str(item.id), "available_qty": float(item.available_qty),
+        "reserved_qty": float(item.reserved_qty),
+        "selling_price_paise": item.selling_price_paise, "version": item.version,
+    }
+
+
+@router.get("/stores/{store_id}/batches")
+def list_store_batches(
+    store_id: UUID,
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_owned_store(str(store_id), owner, db)
+    rows = db.execute(
+        select(StockBatch, Product)
+        .join(Product, Product.id == StockBatch.product_id)
+        .where(StockBatch.store_id == store_id)
+        .order_by(StockBatch.expiry_date.asc().nullslast())
+        .limit(500)
+    ).all()
+    today = date.today()
+    batches = []
+    for batch, product in rows:
+        days_left = (batch.expiry_date - today).days if batch.expiry_date else None
+        if days_left is None:
+            expiry_category = "no expiry date"
+        elif days_left <= 0:
+            expiry_category = "expired"
+        elif days_left <= 7:
+            expiry_category = "expires within 7 days"
+        elif days_left <= 14:
+            expiry_category = "expires within 14 days"
+        else:
+            expiry_category = "in date"
+        batches.append({
+            "id": str(batch.id), "sku_code": product.sku_code,
+            "name": product.name, "batch_code": batch.batch_code,
+            "remaining_qty": float(batch.remaining_qty),
+            "expiry_date": batch.expiry_date.isoformat() if batch.expiry_date else "",
+            "status": batch.status, "expiry_category": expiry_category,
+        })
+    return {"batches": batches}
 
 
 @router.post("/stores/{store_id}/images/analyze")
