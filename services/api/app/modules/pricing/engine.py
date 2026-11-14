@@ -24,6 +24,28 @@ class PricingInputs:
     clearance_allowed: bool = False
 
 
+def minimum_selling_price_paise(
+    cost_price_paise: int,
+    min_margin_bps: int,
+    clearance_allowed: bool = False,
+) -> int:
+    """Return the lowest whole-rupee price satisfying gross margin on selling price.
+
+    Margin basis points are defined as (selling price - cost) / selling price.
+    Explicit clearance can reduce the floor to cost, but never below ₹1.
+    """
+    if cost_price_paise < 0:
+        raise ValueError("Cost price cannot be negative")
+    if not 0 <= min_margin_bps <= 9000:
+        raise ValueError("min_margin_bps must be between 0 and 9000")
+    denominator = 10000 if clearance_allowed else 10000 - min_margin_bps
+    raw_floor_paise = (
+        cost_price_paise * 10000 + denominator - 1
+    ) // denominator
+    whole_rupee_floor = ((raw_floor_paise + 99) // 100) * 100
+    return max(100, whole_rupee_floor)
+
+
 def recommend_price(data: PricingInputs) -> dict:
     """Generate a whole-rupee recommendation subject to all configured limits."""
     if min(data.current_price_paise, data.mrp_paise) <= 0 or data.cost_price_paise < 0:
@@ -68,12 +90,11 @@ def recommend_price(data: PricingInputs) -> dict:
 
     # Storage is integer paise; recommendation is rounded down to whole rupees.
     target = floor(target / 100) * 100
-    margin_floor = (
-        ceil(data.cost_price_paise / 100) * 100
-        if data.clearance_allowed
-        else ceil(data.cost_price_paise * (1 + data.min_margin_bps / 10000) / 100) * 100
+    margin_floor = minimum_selling_price_paise(
+        data.cost_price_paise,
+        data.min_margin_bps,
+        data.clearance_allowed,
     )
-    margin_floor = max(100, margin_floor)
     lower_daily = ceil(data.current_price_paise * 0.90 / 100) * 100
     upper_daily = floor(data.current_price_paise * 1.10 / 100) * 100
     feasible_floor = max(margin_floor, lower_daily)
