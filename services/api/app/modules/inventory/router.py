@@ -311,6 +311,7 @@ async def upload_product_reference_image(
     current_references = db.scalars(select(ProductImage.id).where(
         ProductImage.product_id == product_id,
         ProductImage.is_reference.is_(True),
+        ProductImage.embedding.is_not(None),
         (ProductImage.store_id.is_(None)) | (ProductImage.store_id == store_id),
     ).limit(25)).all()
     if len(current_references) >= 25:
@@ -351,7 +352,7 @@ async def upload_product_reference_image(
         id=reference_id,
         product_id=product_id,
         store_id=store_id,
-        image_url=f"local://{relative_path.replace(chr(92), '/')}",
+        image_url="local://" + relative_path.replace(chr(92), "/"),
         storage_path=relative_path.replace(chr(92), "/"),
         is_reference=True,
         embedding=embedding,
