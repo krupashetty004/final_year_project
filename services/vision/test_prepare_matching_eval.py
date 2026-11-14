@@ -121,3 +121,20 @@ def test_manifest_loader_requires_non_empty_jsonl(tmp_path):
     path.write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no samples"):
         prepare._load_manifest(path)
+
+
+
+def test_prepare_manifest_rejects_image_paths_outside_dataset_root(tmp_path, monkeypatch):
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    (tmp_path / "outside.jpg").write_bytes(b"outside")
+    monkeypatch.setattr(
+        prepare,
+        "embed_image_bytes",
+        lambda _raw: ([1.0] + [0.0] * 511, "clip"),
+    )
+    with pytest.raises(ValueError, match="stay inside the manifest directory"):
+        prepare.prepare_matching_samples(
+            _manifest(query_path="../outside.jpg"),
+            dataset_dir,
+        )
