@@ -18,7 +18,8 @@ def _daily_series(rows: list[tuple], days: int = 180) -> list[float]:
     today = datetime.now(timezone.utc).date()
     start = today - timedelta(days=days)
     totals: dict[date, float] = {}
-    for sold_at, quantity in rows:
+    for row in rows:
+        sold_at, quantity = row[0], row[1]
         day = sold_at.date()
         totals[day] = totals.get(day, 0.0) + float(quantity)
     return [totals.get(start + timedelta(days=i), 0.0) for i in range(days)]
@@ -51,7 +52,7 @@ def get_forecast(
         raise HTTPException(status_code=404, detail="Inventory item not found for this store")
     since = datetime.now(timezone.utc) - timedelta(days=180)
     rows = db.execute(
-        select(Sale.sold_at_utc, Sale.quantity).where(
+        select(Sale.sold_at_utc, Sale.quantity, Sale.is_synthetic).where(
             Sale.store_id == store_id, Sale.product_id == product_id,
             Sale.sold_at_utc >= since,
         ).order_by(Sale.sold_at_utc)
@@ -63,9 +64,7 @@ def get_forecast(
     return {
         "store_id": str(store_id), "product_id": str(product_id),
         **result.__dict__, "history_days": len(series),
-        "data_quality": "synthetic_history_included" if any(
-            getattr(row, "is_synthetic", False) for row in rows
-        ) else "historical_sales",
+        "data_quality": "synthetic_history_included" if any(bool(row[2]) for row in rows) else "historical_sales",
     }
 
 
