@@ -14,7 +14,7 @@ from app.models.entities import (
     CompetitorPrice, OwnerApproval, PriceHistory, PricingRecommendation, Product,
     StockBatch, Store, StoreInventory, User,
 )
-from app.modules.pricing.engine import PricingInputs, recommend_price
+from app.modules.pricing.engine import PricingInputs, minimum_selling_price_paise, recommend_price
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
@@ -303,10 +303,10 @@ def decide_recommendation(
         raise HTTPException(status_code=422, detail="Prices must be rounded to whole rupees")
     if final_price > rec.mrp_paise:
         raise HTTPException(status_code=422, detail="Approved price cannot exceed MRP")
-    min_price = (
-        ceil(item.cost_price_paise / 100) * 100
-        if item.clearance_enabled and store.clearance_below_margin_allowed
-        else ceil(item.cost_price_paise * (1 + item.min_margin_bps / 10000) / 100) * 100
+    min_price = minimum_selling_price_paise(
+        item.cost_price_paise,
+        item.min_margin_bps,
+        bool(item.clearance_enabled and store.clearance_below_margin_allowed),
     )
     if final_price < min_price:
         raise HTTPException(status_code=422, detail="Approved price violates minimum margin")
