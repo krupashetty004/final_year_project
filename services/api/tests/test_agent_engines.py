@@ -1,7 +1,7 @@
 import pytest
 
 from app.modules.forecasting.engine import calculate_reorder, forecast_demand, rolling_origin_backtest
-from app.modules.pricing.engine import PricingInputs, recommend_price
+from app.modules.pricing.engine import PricingInputs, minimum_selling_price_paise, recommend_price
 
 
 def test_moving_average_forecast_is_non_negative():
@@ -164,7 +164,7 @@ def test_competitor_price_signal_respects_margin_and_daily_movement_limits():
         min_margin_bps=1000,
         nearby_median_price_paise=20000,
     ))
-    assert 9350 <= result["recommended_price_paise"] <= 11000
+    assert 9500 <= result["recommended_price_paise"] <= 11000
     assert result["recommended_price_paise"] % 100 == 0
 
 
@@ -176,7 +176,7 @@ def test_competitor_discount_cannot_break_minimum_margin_floor():
         min_margin_bps=1000,
         nearby_median_price_paise=5000,
     ))
-    assert result["recommended_price_paise"] == 10450
+    assert result["recommended_price_paise"] == 10600
     assert result["expected_margin_bps"] >= 1000
 
 
@@ -212,3 +212,17 @@ def test_pricing_rejects_non_positive_stock_pressure():
             cost_price_paise=5000,
             stock_pressure_factor=0,
         ))
+
+
+
+def test_minimum_margin_floor_uses_gross_margin_on_selling_price():
+    assert minimum_selling_price_paise(9500, 1000) == 10600
+    assert minimum_selling_price_paise(9500, 1000, clearance_allowed=True) == 9500
+    assert minimum_selling_price_paise(10000, 0) == 10000
+
+
+def test_minimum_margin_floor_rejects_invalid_configuration():
+    with pytest.raises(ValueError):
+        minimum_selling_price_paise(10000, 9001)
+    with pytest.raises(ValueError):
+        minimum_selling_price_paise(-1, 1000)
