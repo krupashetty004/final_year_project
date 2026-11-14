@@ -19,6 +19,58 @@ from app.modules.pricing.engine import PricingInputs, recommend_price
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
 
+def _eligible_competitor_rows(
+    db: Session,
+    store_id: UUID,
+    now: datetime,
+    product_id: UUID | None = None,
+) -> list[tuple]:
+    """Return latest eligible real observations per peer/SKU candidate set.
+
+    Synthetic observations, unverified price observations, unverified stores,
+    stale/future observations, the current store itself, and peers outside 2 km
+    are never used as market evidence.
+    """
+    stmt = (
+        select(
+            CompetitorPrice.competitor_store_id,
+            CompetitorPrice.product_id,
+            CompetitorPrice.selling_price_paise,
+            CompetitorPrice.observed_at_utc,
+        )
+        .join(Store, Store.id == CompetitorPrice.competitor_store_id)
+        .where(
+            CompetitorPrice.competitor_store_id != store_id,
+            Store.is_verified.is_(True),
+            CompetitorPrice.is_verified.is_(True),
+            CompetitorPrice.is_synthetic.is_(False),
+            CompetitorPrice.distance_km >= 0,
+            CompetitorPrice.distance_km <= 2,
+            CompetitorPrice.observed_at_utc >= now - timedelta(days=30),
+            CompetitorPrice.observed_at_utc <= now,
+        )
+    )
+    if product_id is not None:
+        stmt = stmt.where(CompetitorPrice.product_id == product_id)
+    return db.execute(
+        stmt.order_by(
+            CompetitorPrice.competitor_store_id.asc(),
+            CompetitorPrice.product_id.asc(),
+            CompetitorPrice.observed_at_utc.desc(),
+        )
+    ).all()
+
+
+def _latest_price_per_peer(rows: list[tuple]) -> dict[UUID, dict[UUID, int]]:
+    """Reduce repeated observations to each peer's latest price for each SKU."""
+    result: dict[UUID, dict[UUID, int]] = {}
+    for peer_id, product_id, price_paise, _observed_at in rows:
+        result.setdefault(product_id, {}).setdefault(peer_id, int(price_paise))
+    return result
+
+
+
+
 class ApprovalBody(BaseModel):
     decision: str = Field(pattern="^(accepted|edited|rejected)$")
     final_price_paise: int | None = Field(default=None, gt=0)
@@ -50,32 +102,28 @@ def competitor_comparison(
 ) -> dict:
     require_owned_store(str(store_id), owner, db)
     now = datetime.now(timezone.utc)
-    peer_ids = db.scalars(
-        select(CompetitorPrice.competitor_store_id).where(
-            CompetitorPrice.is_verified.is_(True),
-            CompetitorPrice.distance_km <= 2,
-            CompetitorPrice.observed_at_utc >= now - timedelta(days=30),
-        ).distinct()
-    ).all()
     inventory = db.scalars(select(StoreInventory).where(
         StoreInventory.store_id == store_id,
     ).order_by(StoreInventory.product_id)).all()
+
+    peer_rows = _eligible_competitor_rows(db, store_id, now)
+    price_by_product = _latest_price_per_peer(peer_rows)
+    peer_ids = {row[0] for row in peer_rows}
     comparisons = []
     for item in inventory:
-        values = sorted(int(value) for value in db.scalars(
-            select(CompetitorPrice.selling_price_paise).where(
-                CompetitorPrice.product_id == item.product_id,
-                CompetitorPrice.is_verified.is_(True),
-                CompetitorPrice.distance_km <= 2,
-                CompetitorPrice.observed_at_utc >= now - timedelta(days=30),
-            )
-        ).all())
+        # Use one latest real price per verified peer, not every historical row.
+        values = sorted(price_by_product.get(item.product_id, {}).values())
         median = None
         if values:
             middle = len(values) // 2
-            median = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) // 2
+            median = values[middle] if len(values) % 2 else (
+                values[middle - 1] + values[middle]
+            ) // 2
         product = db.get(Product, item.product_id)
-        diff = round((item.selling_price_paise - median) / median * 100, 2) if median else None
+        diff = (
+            round((item.selling_price_paise - median) / median * 100, 2)
+            if median else None
+        )
         comparisons.append({
             "product_id": str(item.product_id),
             "sku_code": product.sku_code if product else "",
@@ -88,7 +136,9 @@ def competitor_comparison(
         })
     return {
         "store_id": str(store_id), "radius_km": 2.0,
+        "lookback_days": 30,
         "nearby_verified_store_count": len(peer_ids),
+        "synthetic_observations_excluded": True,
         "comparisons": comparisons,
     }
 
@@ -117,31 +167,33 @@ def generate_pricing_recommendations(
         if pending_id:
             skipped += 1
             continue
-        peer_rows = db.scalars(
-            select(CompetitorPrice.selling_price_paise).where(
-                CompetitorPrice.product_id == item.product_id,
-                CompetitorPrice.is_verified.is_(True),
-                CompetitorPrice.observed_at_utc >= now - timedelta(days=30),
-                CompetitorPrice.distance_km <= 2,
-            )
-        ).all()
-        peer_prices = sorted(int(v) for v in peer_rows)
+        if "price_by_product" not in locals():
+            peer_rows = _eligible_competitor_rows(db, store_id, now)
+            price_by_product = _latest_price_per_peer(peer_rows)
+        peer_prices = sorted(price_by_product.get(item.product_id, {}).values())
         median = None
         if peer_prices:
             mid = len(peer_prices) // 2
-            median = peer_prices[mid] if len(peer_prices) % 2 else (peer_prices[mid - 1] + peer_prices[mid]) // 2
+            median = peer_prices[mid] if len(peer_prices) % 2 else (
+                peer_prices[mid - 1] + peer_prices[mid]
+            ) // 2
         batch = db.scalar(
             select(StockBatch).where(
                 StockBatch.store_id == store_id, StockBatch.product_id == item.product_id,
-                StockBatch.remaining_qty > 0, StockBatch.expiry_date.is_not(None),
+                StockBatch.remaining_qty > 0,
+                StockBatch.expiry_date >= now.date(),
             ).order_by(StockBatch.expiry_date).limit(1)
         )
         days_expiry = (batch.expiry_date - now.date()).days if batch else None
         # Only excess inventory creates stock-pressure markdown. A low-stock
         # condition must never be treated as overstock.
         stock_pressure = 1.0
-        if item.reorder_point_qty and item.available_qty > item.reorder_point_qty * Decimal('1.5'):
-            stock_pressure = min(3.0, float(item.available_qty / item.reorder_point_qty))
+        net_stock = max(
+            Decimal("0"),
+            item.available_qty - item.reserved_qty + item.incoming_qty,
+        )
+        if item.reorder_point_qty and net_stock > item.reorder_point_qty * Decimal("1.5"):
+            stock_pressure = min(3.0, float(net_stock / item.reorder_point_qty))
         try:
             result = recommend_price(PricingInputs(
                 current_price_paise=item.selling_price_paise,
