@@ -18,13 +18,12 @@ from uuid import UUID
 from sqlalchemy import Boolean, Date, DateTime, Numeric
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID, insert as pg_insert
 
-from app.core.config import get_settings
 from app.database.session import Base, engine
 from app.models import entities as _entities  # noqa: F401 - register ORM tables
 
 
 def convert_value(value: Any, column_type: Any) -> Any:
-    if value is None:
+    if value is None or value == '':
         return None
     if isinstance(column_type, PGUUID):
         return value if isinstance(value, UUID) else UUID(str(value))
@@ -96,9 +95,7 @@ def import_seed(sqlite_path: Path) -> dict[str, int]:
 
 
 if __name__ == "__main__":
-    settings = get_settings()
     default_path = Path(__file__).resolve().parents[2] / "database" / "retail_connect.sqlite"
-    seed_path = Path(settings.model_config.get("env_file", ".env") or ".env")
     # The database volume is mounted at /app/database in Docker. Local execution
     # from services/api resolves to the repository database folder above.
     sqlite_path = Path("./database/retail_connect.sqlite")
