@@ -18,7 +18,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - Unknown detections remain unassigned; they are not automatically forced to a SKU.
 - Owner review UI can select/correct a SKU, confirm or reject a detection, enter the physically counted quantity, and optionally enter an expiry date and selling price.
 - Only owner-confirmed quantities change inventory. Confirm/reject decisions are recorded in owner approvals.
-- Moving-average and seven-day seasonal-naive demand baselines.
+- Moving-average, seven-day seasonal-naive and Croston-TSB intermittent-demand baselines.
 - Expanding-window rolling-origin evaluation for both baselines, reporting horizon-level MAE, WAPE and forecast bias.
 - Reorder-point calculation using lead-time demand plus safety stock, with supplier pack-size rounding.
 - Reorder suggestions support owner accept/edit/reject. Approval does not automatically place a purchase order.
@@ -28,7 +28,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 - YOLO11 is currently a **generic pretrained object detector**, not a grocery-packaging detector trained/evaluated on the target product set.
 - The CLIP reference-image path is now implemented, but no store reference-photo collection or labelled shelf-image evaluation has been supplied yet. The 0.58 cosine threshold is provisional and is not a measured confidence threshold.
 - The model does not reliably count hidden, stacked or occluded products. Physical quantity confirmation remains mandatory.
-- Advanced forecasting (Croston/TSB, LightGBM, N-HiTS), production model selection and external validation on representative real-store sales are not implemented. Current rolling-origin metrics reflect only the selected store's available history and can include synthetic seed data.
+- Advanced forecasting (LightGBM, N-HiTS), production model selection and external validation on representative real-store sales are not implemented. Current rolling-origin metrics reflect only the selected store's available history and can include synthetic seed data.
 - There is no validated production dataset or measured real-world shelf detection/SKU matching accuracy. CLIP similarity scores are ranking signals, not calibrated probabilities.
 
 ## Objective 2 — Smart Pricing Agent
