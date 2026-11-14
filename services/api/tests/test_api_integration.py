@@ -210,6 +210,26 @@ def test_owner_can_run_sku_rolling_origin_backtest(owner_client):
     assert all("wape_pct" in metrics for metrics in payload["models"].values())
 
 
+
+def test_owner_can_auto_select_reorder_forecast_baseline(owner_client):
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    response = client.post(
+        f"/api/v1/forecasting/stores/{store_id}/reorder-suggestions/generate?model=auto",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["forecast_model"] == "auto"
+    assert payload["model_selection_method"] == (
+        "lowest_wape_rolling_origin_with_moving_average_fallback"
+    )
+    assert set(payload["models_used"]).issubset({
+        "moving_average", "seasonal_naive", "croston_tsb",
+    })
+
+
+
 def test_owner_can_generate_reorders_with_croston_tsb(owner_client):
     client, headers = owner_client
     store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
