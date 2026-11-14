@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from math import ceil
 from uuid import UUID
 
@@ -86,7 +87,7 @@ def generate_pricing_recommendations(
         # Only excess inventory creates stock-pressure markdown. A low-stock
         # condition must never be treated as overstock.
         stock_pressure = 1.0
-        if item.reorder_point_qty and item.available_qty > item.reorder_point_qty * 1.5:
+        if item.reorder_point_qty and item.available_qty > item.reorder_point_qty * Decimal('1.5'):
             stock_pressure = min(3.0, float(item.available_qty / item.reorder_point_qty))
         try:
             result = recommend_price(PricingInputs(
