@@ -462,6 +462,9 @@ async def analyze_inventory_photo(
             )
             response.raise_for_status()
         result = response.json()
+        result["matching_method"] = (
+            "pgvector_cosine_similarity" if has_visual_references else "ocr_text_similarity"
+        )
         saved_detections = []
         for detection in result.get("detections", []):
             image_embedding = detection.pop("image_embedding", None)
