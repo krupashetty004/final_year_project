@@ -302,6 +302,74 @@ def test_pricing_comparison_filters_demo_and_old_peer_rows(owner_client):
     assert row["nearby_verified_stores"] == 2
     assert row["nearby_median_paise"] == 11500
 
+
+def test_pricing_recommendation_uses_only_real_sales_demand_trend(owner_client):
+    from datetime import datetime, timedelta, timezone
+    from decimal import Decimal
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.database.session import SessionLocal
+    from app.models.entities import PricingRecommendation, Sale, StoreInventory
+
+    client, headers = owner_client
+    store_id_text = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    store_id = UUID(store_id_text)
+    with SessionLocal() as db:
+        inventory = db.scalar(
+            select(StoreInventory).where(StoreInventory.store_id == store_id).limit(1)
+        )
+        assert inventory is not None
+        now = datetime.now(timezone.utc)
+        rows = []
+        # Prior 28 days: one unit per day.
+        for day_offset in range(8, 36):
+            qty = Decimal("1.000")
+            rows.append(Sale(
+                store_id=store_id, product_id=inventory.product_id,
+                sold_at_utc=now - timedelta(days=day_offset),
+                quantity=qty, unit_type=inventory.unit_type,
+                unit_selling_price_paise=inventory.selling_price_paise,
+                unit_cost_paise=inventory.cost_price_paise,
+                total_revenue_paise=int(qty * inventory.selling_price_paise),
+                is_synthetic=False,
+            ))
+        # Recent 7 days: two units per day, a 2x baseline trend.
+        for day_offset in range(0, 7):
+            qty = Decimal("2.000")
+            rows.append(Sale(
+                store_id=store_id, product_id=inventory.product_id,
+                sold_at_utc=now - timedelta(days=day_offset),
+                quantity=qty, unit_type=inventory.unit_type,
+                unit_selling_price_paise=inventory.selling_price_paise,
+                unit_cost_paise=inventory.cost_price_paise,
+                total_revenue_paise=int(qty * inventory.selling_price_paise),
+                is_synthetic=False,
+            ))
+        db.add_all(rows)
+        db.commit()
+        product_id = inventory.product_id
+
+    response = client.post(
+        f"/api/v1/pricing/stores/{store_id_text}/recommendations/generate"
+        f"?product_id={product_id}",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["created_count"] == 1
+
+    with SessionLocal() as db:
+        recommendation = db.scalar(select(PricingRecommendation).where(
+            PricingRecommendation.store_id == store_id,
+            PricingRecommendation.product_id == product_id,
+            PricingRecommendation.status == "pending",
+        ).order_by(PricingRecommendation.created_at_utc.desc()).limit(1))
+        assert recommendation is not None
+        assert recommendation.demand_signal_price_paise is not None
+        assert recommendation.demand_signal_price_paise > recommendation.current_price_paise
+        assert "high_demand" in recommendation.explanation
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
