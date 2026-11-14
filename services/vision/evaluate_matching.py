@@ -160,8 +160,9 @@ def evaluate_samples(
 
     baseline = _threshold_metrics(prepared, 0.58)
     rank_correct = sum(
-        row["top_product_id"] == row["expected_product_id"]
-        for row in known_top1
+        row["expected_product_id"] is not None
+        and row["top_product_id"] == row["expected_product_id"]
+        for row in prepared
     )
     return {
         "status": "evaluated",
