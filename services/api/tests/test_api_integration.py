@@ -209,6 +209,17 @@ def test_owner_can_run_sku_rolling_origin_backtest(owner_client):
     assert set(payload["models"]) == {"moving_average", "seasonal_naive", "croston_tsb"}
     assert all("wape_pct" in metrics for metrics in payload["models"].values())
 
+
+def test_owner_can_generate_reorders_with_croston_tsb(owner_client):
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    response = client.post(
+        f"/api/v1/forecasting/stores/{store_id}/reorder-suggestions/generate?model=croston_tsb",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["forecast_model"] == "croston_tsb"
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
