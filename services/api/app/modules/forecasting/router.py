@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_current_owner, require_owned_store
 from app.database.session import get_db
 from app.models.entities import OwnerApproval, Product, ReorderSuggestion, Sale, StoreInventory, Supplier, User
-from app.modules.forecasting.engine import calculate_reorder, forecast_demand
+from app.modules.forecasting.engine import calculate_reorder, forecast_demand, rolling_origin_backtest
 
 router = APIRouter(prefix="/forecasting", tags=["forecasting"])
 
@@ -94,6 +94,55 @@ def get_forecast(
         "store_id": str(store_id), "product_id": str(product_id),
         **result.__dict__, "history_days": len(series),
         "data_quality": "synthetic_history_included" if any(bool(row[2]) for row in rows) else "historical_sales",
+    }
+
+
+@router.get("/stores/{store_id}/products/{product_id}/backtest")
+def get_forecast_backtest(
+    store_id: UUID,
+    product_id: UUID,
+    horizon_days: int = Query(default=7, ge=1, le=30),
+    min_train_days: int = Query(default=28, ge=7, le=120),
+    step_days: int = Query(default=7, ge=1, le=30),
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Evaluate both deterministic demand baselines on historical rolling origins."""
+    require_owned_store(str(store_id), owner, db)
+    exists = db.scalar(select(StoreInventory.id).where(
+        StoreInventory.store_id == store_id,
+        StoreInventory.product_id == product_id,
+    ))
+    if not exists:
+        raise HTTPException(status_code=404, detail="Inventory item not found for this store")
+
+    since = datetime.now(timezone.utc) - timedelta(days=180)
+    rows = db.execute(
+        select(Sale.sold_at_utc, Sale.quantity, Sale.is_synthetic).where(
+            Sale.store_id == store_id,
+            Sale.product_id == product_id,
+            Sale.sold_at_utc >= since,
+        ).order_by(Sale.sold_at_utc)
+    ).all()
+    daily = _daily_series(rows)
+    if not rows or not any(daily):
+        raise HTTPException(status_code=422, detail="No sales history available for backtesting")
+
+    result = rolling_origin_backtest(
+        daily,
+        horizon_days=horizon_days,
+        min_train_days=min_train_days,
+        step_days=step_days,
+    )
+    return {
+        "store_id": str(store_id),
+        "product_id": str(product_id),
+        "history_days": len(daily),
+        "data_quality": (
+            "synthetic_history_included" if any(bool(row[2]) for row in rows)
+            else "historical_sales"
+        ),
+        **result,
     }
 
 
