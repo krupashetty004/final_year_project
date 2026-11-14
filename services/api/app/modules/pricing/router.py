@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from math import ceil
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -369,9 +370,18 @@ def decide_recommendation(
     if item.last_price_changed_at_utc and item.last_price_changed_at_utc >= today_start:
         raise HTTPException(status_code=409, detail="A price change has already been approved today")
     old_price = item.selling_price_paise
-    item.selling_price_paise = final_price
-    item.last_price_changed_at_utc = now
-    item.version += 1
+    price_changed = final_price != old_price
+    if price_changed and item.last_price_changed_at_utc:
+        changed_at = item.last_price_changed_at_utc
+        if changed_at.tzinfo is None:
+            changed_at = changed_at.replace(tzinfo=timezone.utc)
+        india_tz = ZoneInfo("Asia/Kolkata")
+        if changed_at.astimezone(india_tz).date() == now.astimezone(india_tz).date():
+            raise HTTPException(status_code=409, detail="A price change has already been recorded for this SKU today")
+    if price_changed:
+        item.selling_price_paise = final_price
+        item.last_price_changed_at_utc = now
+        item.version += 1
     rec.owner_final_price_paise = final_price
     rec.status = "accepted" if body.decision == "accepted" else "edited"
     rec.decided_at_utc = now
