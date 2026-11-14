@@ -631,6 +631,28 @@ export const DemandForecastingPage: React.FC = () => {
     enabled: Boolean(activeStoreId && productId),
   });
 
+  const { data: backtest, isLoading: backtestLoading, error: backtestError } = useQuery({
+    queryKey: ['sku-forecast-backtest', activeStoreId, productId],
+    queryFn: () => apiFetch<{
+      status: string;
+      history_days: number;
+      origin_count: number;
+      horizon_days: number;
+      data_quality: string;
+      best_baseline_by_wape: string | null;
+      models: Record<string, {
+        origin_count: number;
+        mae_horizon_units: number | null;
+        wape_pct: number | null;
+        bias_pct: number | null;
+        actual_units_evaluated: number;
+      }>;
+    }>(
+      `/forecasting/stores/${activeStoreId}/products/${productId}/backtest?horizon_days=7&min_train_days=28&step_days=7`,
+    ),
+    enabled: Boolean(activeStoreId && productId),
+  });
+
   const chartData = (history?.series ?? []).map((s) => ({
     date: s.date.slice(5),
     units: s.units_sold,
@@ -641,7 +663,7 @@ export const DemandForecastingPage: React.FC = () => {
     <div className="space-y-5">
       <StageNotice
         stage="Stage 4 · Sales history and SKU demand baseline"
-        summary="The historical chart shows recorded store sales. Per-SKU forecasts use a moving-average or seven-day seasonal-naive baseline. Croston-TSB, LightGBM, model selection and rolling backtests are not enabled yet."
+        summary="The historical chart shows recorded store sales. Per-SKU forecasts use a moving-average or seven-day seasonal-naive baseline, and rolling-origin backtests compare both baselines using MAE, WAPE and bias. Croston-TSB, LightGBM and production model selection are not enabled yet."
       />
       <Card>
         <CardHeader>
@@ -696,6 +718,54 @@ export const DemandForecastingPage: React.FC = () => {
                 <p className="mt-1 text-sm font-semibold text-slate-900">{forecast.model_name} · {forecast.history_days} days</p>
               </div>
             </div>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <h3 className="font-display text-sm font-semibold text-slate-900">
+            Rolling-origin forecast validation · 7-day horizon
+          </h3>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {backtestLoading && <p className="text-xs text-slate-500">Evaluating baseline forecasts against historical windows…</p>}
+          {backtestError && <p className="text-xs text-amber-700">{backtestError instanceof Error ? backtestError.message : 'Backtest unavailable for this SKU'}</p>}
+          {backtest && backtest.status === 'evaluated' && (
+            <>
+              <p className="text-xs text-slate-500">
+                {backtest.origin_count} rolling origins · {backtest.history_days} daily observations · {backtest.data_quality.replaceAll('_', ' ')}
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(backtest.models).map(([name, metrics]) => (
+                  <div key={name} className="rounded-lg border border-slate-200 p-3">
+                    <p className="text-xs font-semibold text-slate-900">{name.replaceAll('_', ' ')}</p>
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      <div>
+                        <p className="text-xs text-slate-500">MAE / horizon</p>
+                        <p className="text-sm font-semibold text-slate-900">{metrics.mae_horizon_units?.toFixed(2) ?? '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500">WAPE</p>
+                        <p className="text-sm font-semibold text-slate-900">{metrics.wape_pct === null ? '—' : `${metrics.wape_pct.toFixed(2)}%`}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500">Bias</p>
+                        <p className="text-sm font-semibold text-slate-900">{metrics.bias_pct === null ? '—' : `${metrics.bias_pct.toFixed(2)}%`}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-600">
+                Lower WAPE baseline: {backtest.best_baseline_by_wape?.replaceAll('_', ' ') ?? 'not defined (zero actual demand)'}.
+              </p>
+              <p className="text-xs text-slate-500">
+                These are historical backtest metrics, not a guarantee of future performance. Seeded synthetic sales are identified above and must not be interpreted as real store accuracy.
+              </p>
+            </>
+          )}
+          {backtest && backtest.status === 'insufficient_history' && (
+            <p className="text-xs text-amber-700">Not enough history for the configured rolling-origin evaluation.</p>
           )}
         </CardContent>
       </Card>
