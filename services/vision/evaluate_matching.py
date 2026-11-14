@@ -57,11 +57,8 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _top_match(query: list[float], catalogue: list[dict[str, Any]]) -> tuple[str | None, float | None]:
-    matches = rank_visual_matches(query, catalogue, limit=1, threshold=-1.0)
-    if not matches:
-        return None, None
-    return matches[0]["product_id"], float(matches[0]["score"])
+def _top_matches(query: list[float], catalogue: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return rank_visual_matches(query, catalogue, limit=3, threshold=-1.0)
 
 
 def _threshold_metrics(
@@ -130,12 +127,13 @@ def evaluate_samples(
         query = [float(value) for value in sample["query_embedding"]]
         if not all(math.isfinite(value) for value in query):
             raise ValueError(f"Sample {index}: query embedding contains non-finite values")
-        top_product, top_score = _top_match(query, sample["catalogue"])
+        matches = _top_matches(query, sample["catalogue"])
         prepared.append({
             "query_id": str(sample["query_id"]),
             "expected_product_id": sample.get("expected_product_id"),
-            "top_product_id": top_product,
-            "top_score": top_score,
+            "top_product_id": matches[0]["product_id"] if matches else None,
+            "top_score": float(matches[0]["score"]) if matches else None,
+            "top3_product_ids": [match["product_id"] for match in matches],
         })
 
     known_count = sum(row["expected_product_id"] is not None for row in prepared)
@@ -159,11 +157,22 @@ def evaluate_samples(
         calibration_status = "calibrated_on_supplied_labels"
 
     baseline = _threshold_metrics(prepared, 0.58)
+    known_rows = [row for row in prepared if row["expected_product_id"] is not None]
     rank_correct = sum(
-        row["expected_product_id"] is not None
-        and row["top_product_id"] == row["expected_product_id"]
-        for row in prepared
+        row["top_product_id"] == row["expected_product_id"]
+        for row in known_rows
     )
+    top3_correct = sum(
+        row["expected_product_id"] in row["top3_product_ids"]
+        for row in known_rows
+    )
+    reciprocal_ranks = []
+    for row in known_rows:
+        try:
+            rank = row["top3_product_ids"].index(row["expected_product_id"]) + 1
+            reciprocal_ranks.append(1.0 / rank)
+        except ValueError:
+            reciprocal_ranks.append(0.0)
     return {
         "status": "evaluated",
         "calibration_status": calibration_status,
@@ -172,6 +181,12 @@ def evaluate_samples(
         "unknown_sample_count": unknown_count,
         "known_top1_accuracy_before_threshold": (
             round(rank_correct / known_count, 6) if known_count else None
+        ),
+        "known_top3_recall_before_threshold": (
+            round(top3_correct / known_count, 6) if known_count else None
+        ),
+        "known_mean_reciprocal_rank_at_3": (
+            round(sum(reciprocal_ranks) / known_count, 6) if known_count else None
         ),
         "configured_threshold_metrics": baseline,
         "recommended_threshold": best["threshold"] if best is not None else None,
