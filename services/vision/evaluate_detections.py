@@ -27,7 +27,7 @@ def _validate_box(box: Any, context: str) -> list[float]:
         raise ValueError(f"{context}: box must contain four normalized coordinates")
     values = [float(value) for value in box]
     if not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in values):
-        raise ValueError(f"{context}: box coordinates must be finite and in [0, 1]")
+        raise ValueError(f"{context}: normalized box coordinates must be finite and in [0, 1]")
     if values[2] <= values[0] or values[3] <= values[1]:
         raise ValueError(f"{context}: box must have positive width and height")
     return values
