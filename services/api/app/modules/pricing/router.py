@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from math import ceil
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
