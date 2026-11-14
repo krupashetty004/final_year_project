@@ -1,4 +1,4 @@
-from pipeline import match_catalogue, rank_visual_matches
+from pipeline import _clip_feature_tensor, match_catalogue, rank_visual_matches
 
 
 def test_ocr_matching_ranks_correct_sku_first():
@@ -67,3 +67,21 @@ def test_visual_matching_rejects_wrong_embedding_dimension():
         assert "512" in str(exc)
     else:
         raise AssertionError("Expected a 512-dimensional embedding validation error")
+
+
+
+def test_clip_feature_extractor_reads_transformers_pooler_output():
+    class ModelOutput:
+        def __init__(self):
+            self.pooler_output = "projected-image-features"
+
+    assert _clip_feature_tensor(ModelOutput()) == "projected-image-features"
+
+
+def test_clip_feature_extractor_supports_image_embeds_and_tuple_outputs():
+    class ImageOutput:
+        image_embeds = "image-embeds"
+        pooler_output = "pooled"
+
+    assert _clip_feature_tensor(ImageOutput()) == "image-embeds"
+    assert _clip_feature_tensor(("tuple-features",)) == "tuple-features"
