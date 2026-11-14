@@ -95,6 +95,7 @@ Use this seeded account after the PostgreSQL import. Do not use it for real data
 - GET /api/v1/stores/{store_id}/dashboard
 - GET /api/v1/inventory/stores/{store_id}/inventory
 - PATCH /api/v1/inventory/stores/{store_id}/inventory/{inventory_id}
+- GET /api/v1/inventory/stores/{store_id}/images (owner-only review history)
 - POST /api/v1/inventory/stores/{store_id}/images/analyze
 - POST /api/v1/inventory/stores/{store_id}/images/{upload_id}/detections/{detection_id}/confirm
 - POST /api/v1/inventory/stores/{store_id}/images/{upload_id}/detections/{detection_id}/reject
@@ -114,7 +115,7 @@ All store-specific write actions require a valid owner JWT and verify store owne
 The GitHub Actions validation workflow checks:
 
 - Frontend: TypeScript, production build and existing Node tests.
-- API: unit tests for forecast/reorder/pricing logic and existing model/auth tests.
+- API: unit tests plus PostgreSQL-backed integration tests covering Alembic migration, SQLite seed import, owner authentication, tenant isolation, inventory reads and shelf-photo review history.
 - Vision: OCR catalogue-matching utility tests without downloading model weights.
 
 Run the checks locally:
