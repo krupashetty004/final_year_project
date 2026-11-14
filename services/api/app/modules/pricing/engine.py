@@ -7,7 +7,7 @@ separately validated model task.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import floor
+from math import ceil, floor
 from typing import Optional
 
 
@@ -69,12 +69,12 @@ def recommend_price(data: PricingInputs) -> dict:
     # Storage is integer paise; recommendation is rounded down to whole rupees.
     target = floor(target / 100) * 100
     margin_floor = (
-        data.cost_price_paise
+        ceil(data.cost_price_paise / 100) * 100
         if data.clearance_allowed
-        else floor(data.cost_price_paise * (1 + data.min_margin_bps / 10000))
+        else ceil(data.cost_price_paise * (1 + data.min_margin_bps / 10000) / 100) * 100
     )
     margin_floor = max(100, margin_floor)
-    lower_daily = floor(data.current_price_paise * 0.90 / 100) * 100
+    lower_daily = ceil(data.current_price_paise * 0.90 / 100) * 100
     upper_daily = floor(data.current_price_paise * 1.10 / 100) * 100
     feasible_floor = max(margin_floor, lower_daily)
     feasible_ceiling = min(data.mrp_paise, upper_daily)
