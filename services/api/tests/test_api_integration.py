@@ -206,7 +206,7 @@ def test_owner_can_run_sku_rolling_origin_backtest(owner_client):
     payload = response.json()
     assert payload["status"] == "evaluated"
     assert payload["origin_count"] > 0
-    assert set(payload["models"]) == {"moving_average", "seasonal_naive"}
+    assert set(payload["models"]) == {"moving_average", "seasonal_naive", "croston_tsb"}
     assert all("wape_pct" in metrics for metrics in payload["models"].values())
 
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
