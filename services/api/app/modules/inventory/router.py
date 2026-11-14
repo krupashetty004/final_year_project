@@ -33,7 +33,7 @@ def list_stores(db: Session = Depends(get_db)) -> list[Store]:
 def list_products(
     search: str = Query(default="", max_length=120),
     category: str = Query(default="", max_length=80),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[Product]:
@@ -106,9 +106,10 @@ async def analyze_inventory_photo(
             )
             response.raise_for_status()
         result = response.json()
+        saved_detections = []
         for detection in result.get("detections", []):
             bbox = detection.get("bbox", [0, 0, 0, 0])
-            db.add(DetectedProduct(
+            record = DetectedProduct(
                 upload_id=upload_id,
                 bbox_x1=Decimal(str(bbox[0])), bbox_y1=Decimal(str(bbox[1])),
                 bbox_x2=Decimal(str(bbox[2])), bbox_y2=Decimal(str(bbox[3])),
@@ -117,8 +118,13 @@ async def analyze_inventory_photo(
                 top_matches_json=detection.get("top_matches", []),
                 is_unknown=bool(detection.get("is_unknown", True)),
                 owner_action="pending",
-            ))
-        upload.detected_count = len(result.get("detections", []))
+            )
+            db.add(record)
+            saved_detections.append(record)
+        db.flush()
+        for detection, record in zip(result.get("detections", []), saved_detections):
+            detection["detected_product_id"] = str(record.id)
+        upload.detected_count = len(saved_detections)
         upload.status = "ready_for_review"
         db.commit()
         return {
