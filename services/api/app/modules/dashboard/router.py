@@ -12,6 +12,37 @@ from app.models.entities import Product, Sale, StockBatch, Store, StoreInventory
 router = APIRouter(tags=["store dashboard"])
 
 
+
+
+@router.get("/stores")
+def list_owner_stores(
+    owner: User = Depends(get_current_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return only stores owned by the authenticated user."""
+    stores = db.scalars(
+        select(Store).where(Store.owner_id == owner.id).order_by(Store.store_code)
+    ).all()
+    return {"stores": [
+        {
+            "id": str(store.id),
+            "store_code": store.store_code,
+            "name": store.name,
+            "address": store.address,
+            "city": store.city,
+            "state": store.state,
+            "pincode": store.pincode,
+            "latitude": store.latitude,
+            "longitude": store.longitude,
+            "is_verified": store.is_verified,
+            "default_min_margin_bps": store.default_min_margin_bps,
+            "clearance_below_margin_allowed": store.clearance_below_margin_allowed,
+            "is_synthetic": store.is_synthetic,
+        }
+        for store in stores
+    ]}
+
+
 @router.get("/stores/{store_id}/dashboard")
 def get_store_dashboard(
     store_id: UUID,
