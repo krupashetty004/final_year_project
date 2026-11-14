@@ -66,6 +66,7 @@ async def embed_reference_image(file: UploadFile = File(...)) -> dict:
 async def analyze_shelf_photo(
     file: UploadFile = File(...),
     catalogue_json: str = Form(...),
+    use_visual_embeddings: bool = Form(default=False),
 ) -> dict:
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(status_code=415, detail="Only JPEG, PNG and WebP images are supported")
@@ -82,7 +83,7 @@ async def analyze_shelf_photo(
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid catalogue: {exc}")
     try:
-        return await run_in_threadpool(analyze_image, raw, catalogue)
+        return await run_in_threadpool(analyze_image, raw, catalogue, use_visual_embeddings)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=f"Vision dependency unavailable: {exc}")
     except Exception as exc:
