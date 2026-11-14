@@ -158,6 +158,22 @@ python evaluate_matching.py .\data\labelled_shelf_embeddings.jsonl --output .\re
 
 Each sample must contain `query_id`, `expected_product_id`, a 512-value `query_embedding`, and a `catalogue` list whose products include `product_id`, `sku_code`, and `reference_embeddings` (a list of 512-value vectors). Set `expected_product_id` to JSON `null` for a genuinely unknown/unlisted item. Use representative lighting, angles, packaging variants and unknown products. Keep a separate held-out test set: calibration-set metrics are not final test accuracy. The report explicitly treats cosine similarity as a ranking score, not a probability.
 
+To build embedding JSONL directly from real image files, first prepare a manifest with paths relative to the manifest file:
+
+~~~json
+{"query_id":"shelf-001-crop-01","query_image":"queries/crop-01.jpg","expected_product_id":"product-uuid-1","catalogue":[{"product_id":"product-uuid-1","sku_code":"SKU-001","name":"Example product","brand":"Example brand","reference_images":["references/SKU-001-front.jpg","references/SKU-001-back.jpg"]},{"product_id":"product-uuid-2","sku_code":"SKU-002","name":"Another product","brand":"Another brand","reference_images":["references/SKU-002-front.jpg"]}]}
+{"query_id":"shelf-001-crop-02","query_image":"queries/crop-02.jpg","expected_product_id":null,"catalogue":[{"product_id":"product-uuid-1","sku_code":"SKU-001","name":"Example product","brand":"Example brand","reference_images":["references/SKU-001-front.jpg"]}]}
+~~~
+
+Then run:
+
+~~~powershell
+python prepare_matching_eval.py .\data\matching_manifest.jsonl --output .\data\matching_embeddings.jsonl
+python evaluate_matching.py .\data\matching_embeddings.jsonl --output .\reports\matching_calibration.json
+~~~
+
+The preparation step embeds repeated reference files once and rejects a query image that is also listed as its own SKU reference. For held-out evaluation, split by original photo/session (and preferably store) before preparing the manifest; separate crops from the same shelf photo are not independent test samples.
+
 ### Labelled shelf-region detection evaluation
 
 The region evaluator accepts one JSONL row per image with `image_id`, normalized `ground_truth_boxes` (`[x1, y1, x2, y2]`) and `predicted_boxes` (each with `bbox`, `confidence`, and optional `label`). It reports class-agnostic precision, recall, F1 and AP@IoU0.50 for candidate object regions. This does not measure SKU identity, class correctness or quantity estimation.
@@ -174,7 +190,7 @@ Use the AP result only as a class-agnostic object-region localization measure; d
 
 ## Important security, data and deployment limitations
 
-- The current authentication hash deliberately matches the existing demo SQLite preview's fixed-salt SHA-256 scheme. **It is not safe for real user accounts.** Replace it with Argon2id/bcrypt/scrypt and migrate both runtimes before production.
+- New owner passwords use Argon2id. Legacy demo SHA-256 hashes are upgraded to Argon2id after a successful login; the seeded demo account remains demo-only and must not be used as a production credential.
 - Set a strong unique JWT_SECRET in .env. The browser frontend does not receive the secret.
 - New store registration leaves the store unverified and uses placeholder Bengaluru coordinates. Replace these with verified coordinates before enabling real location-based comparisons.
 - Shelf photos are stored locally under services/api/uploads (mounted into the API container). Configure private durable object storage, access controls and retention/deletion policies before handling real store imagery.
