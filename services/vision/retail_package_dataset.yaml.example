@@ -1,0 +1,8 @@
+# Copy to a real dataset YAML and update the path.
+# Keep train, val and test partitions disjoint by original shelf photo/session.
+path: ./data/retail_package_dataset
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: product_package
