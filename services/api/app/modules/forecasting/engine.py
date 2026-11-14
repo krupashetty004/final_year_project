@@ -32,6 +32,8 @@ def forecast_demand(
     """Forecast non-negative daily demand using moving-average or seasonal-naive."""
     if horizon_days < 1 or horizon_days > 90:
         raise ValueError("horizon_days must be between 1 and 90")
+    if window < 1:
+        raise ValueError("window must be at least 1")
     if not daily_quantities:
         raise ValueError("At least one historical daily quantity is required")
     values = [float(v) for v in daily_quantities]
@@ -42,13 +44,17 @@ def forecast_demand(
         daily_mean = mean(sample)
         sigma = pstdev(sample) if len(sample) > 1 else 0.0
     elif model == "seasonal_naive":
-        # Repeat the most recently observed 7-day pattern where available.
+        # Repeat the most recent seven daily observations across the horizon.
         sample = values[-7:] if len(values) >= 7 else values
         daily_mean = mean(sample)
         sigma = pstdev(sample) if len(sample) > 1 else 0.0
     else:
         raise ValueError("model must be moving_average or seasonal_naive")
-    predicted = daily_mean * horizon_days
+    predicted = (
+        sum(sample[i % len(sample)] for i in range(horizon_days))
+        if model == "seasonal_naive"
+        else daily_mean * horizon_days
+    )
     spread = 1.645 * sigma * sqrt(horizon_days)
     return Forecast(
         model_name=model,
