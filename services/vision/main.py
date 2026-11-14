@@ -1,16 +1,17 @@
 from datetime import datetime, timezone
 import json
+import os
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
-from pipeline import analyze_image, match_catalogue
+from pipeline import analyze_image, embed_image_bytes, match_catalogue, DEFAULT_EMBEDDING_MODEL
 
 app = FastAPI(
     title="AI Powered Retail Connect - Vision Service",
-    version="0.2.0",
-    description="YOLO object-region detection plus OCR-assisted catalogue candidate ranking.",
+    version="0.3.0",
+    description="Generic YOLO regions, EasyOCR, and CLIP image-reference matching.",
 )
 
 
@@ -21,6 +22,7 @@ class VisionHealth(BaseModel):
     stage: str
     timestamp_utc: datetime
     embedding_matching_enabled: bool
+    embedding_model: str
 
 
 @app.get("/health", response_model=VisionHealth)
@@ -29,10 +31,35 @@ def health() -> VisionHealth:
         status="ok",
         service="retail-connect-vision",
         detectors_supported=["yolo11_generic"],
-        stage="ocr_assisted_beta",
+        stage="clip_reference_matching_beta",
         timestamp_utc=datetime.now(timezone.utc),
-        embedding_matching_enabled=False,
+        embedding_matching_enabled=True,
+        embedding_model=os.getenv("VISION_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
     )
+
+
+@app.post("/embed")
+async def embed_reference_image(file: UploadFile = File(...)) -> dict:
+    """Return an L2-normalized 512-D CLIP image embedding for a SKU reference."""
+    if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(status_code=415, detail="Only JPEG, PNG and WebP images are supported")
+    raw = await file.read(10 * 1024 * 1024 + 1)
+    if not raw or len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be non-empty and no larger than 10 MB")
+    try:
+        embedding, model_name = await run_in_threadpool(embed_image_bytes, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"Vision dependency unavailable: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"CLIP image embedding unavailable: {exc}")
+    return {
+        "embedding": embedding,
+        "dimension": len(embedding),
+        "model": model_name,
+        "normalization": "l2",
+    }
 
 
 @app.post("/analyze")
@@ -43,8 +70,8 @@ async def analyze_shelf_photo(
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(status_code=415, detail="Only JPEG, PNG and WebP images are supported")
     raw = await file.read(10 * 1024 * 1024 + 1)
-    if len(raw) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Image exceeds the 10 MB limit")
+    if not raw or len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be non-empty and no larger than 10 MB")
     try:
         catalogue = json.loads(catalogue_json)
         if not isinstance(catalogue, list) or len(catalogue) > 2000:
@@ -71,6 +98,6 @@ class CatalogueMatchRequest(BaseModel):
 def match_catalogue_endpoint(payload: CatalogueMatchRequest) -> dict:
     return {
         "matches": match_catalogue(payload.ocr_text, payload.catalogue),
-        "method": "ocr_token_similarity",
+        "method": "ocr_text_similarity",
         "embedding_matching_enabled": False,
     }
