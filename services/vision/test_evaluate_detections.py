@@ -66,7 +66,7 @@ def test_confidence_filter_excludes_low_confidence_proposals():
 
 
 def test_region_evaluation_rejects_invalid_box_coordinates():
-    with pytest.raises(ValueError, match="normalized coordinates"):
+    with pytest.raises(ValueError, match="normalized box coordinates"):
         evaluate_detections([
             _sample([[0.1, 0.1, 1.2, 0.4]], [])
         ])
