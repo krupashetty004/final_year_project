@@ -7,7 +7,7 @@ available.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, sqrt
+from math import ceil, isfinite, sqrt
 from statistics import mean, pstdev
 from typing import Sequence
 
@@ -37,6 +37,8 @@ def forecast_demand(
     if not daily_quantities:
         raise ValueError("At least one historical daily quantity is required")
     values = [float(v) for v in daily_quantities]
+    if any(not isfinite(v) for v in values):
+        raise ValueError("Daily quantities must be finite numbers")
     if any(v < 0 for v in values):
         raise ValueError("Daily quantities cannot be negative")
     if model == "moving_average":
@@ -66,6 +68,99 @@ def forecast_demand(
         upper_bound_qty=round(predicted + spread, 3),
     )
 
+
+
+def rolling_origin_backtest(
+    daily_quantities: Sequence[float],
+    horizon_days: int = 7,
+    min_train_days: int = 28,
+    step_days: int = 7,
+) -> dict:
+    """Compare the two supported baselines using expanding-window backtests.
+
+    Each origin predicts the next horizon as a total quantity. MAE is measured
+    in units per horizon; WAPE and bias are percentages. These metrics evaluate
+    the supplied history only and are not a guarantee of future accuracy.
+    """
+    if horizon_days < 1 or horizon_days > 90:
+        raise ValueError("horizon_days must be between 1 and 90")
+    if min_train_days < 7:
+        raise ValueError("min_train_days must be at least 7")
+    if step_days < 1 or step_days > 90:
+        raise ValueError("step_days must be between 1 and 90")
+    values = [float(value) for value in daily_quantities]
+    if any(not isfinite(value) or value < 0 for value in values):
+        raise ValueError("Daily quantities must be finite and non-negative")
+
+    required_days = min_train_days + horizon_days
+    if len(values) < required_days:
+        return {
+            "status": "insufficient_history",
+            "horizon_days": horizon_days,
+            "min_train_days": min_train_days,
+            "step_days": step_days,
+            "required_history_days": required_days,
+            "available_history_days": len(values),
+            "origin_count": 0,
+            "models": {},
+            "best_baseline_by_wape": None,
+        }
+
+    origins = range(min_train_days, len(values) - horizon_days + 1, step_days)
+    results: dict[str, dict] = {}
+    for model in ("moving_average", "seasonal_naive"):
+        errors: list[float] = []
+        signed_errors: list[float] = []
+        actual_total = 0.0
+        for origin in origins:
+            actual = sum(values[origin:origin + horizon_days])
+            predicted = forecast_demand(
+                values[:origin],
+                horizon_days=horizon_days,
+                model=model,
+            ).predicted_qty
+            errors.append(abs(predicted - actual))
+            signed_errors.append(predicted - actual)
+            actual_total += actual
+
+        total_absolute_error = sum(errors)
+        results[model] = {
+            "origin_count": len(errors),
+            "mae_horizon_units": round(mean(errors), 4) if errors else None,
+            "wape_pct": (
+                round(total_absolute_error / actual_total * 100, 4)
+                if actual_total > 0 else None
+            ),
+            "bias_pct": (
+                round(sum(signed_errors) / actual_total * 100, 4)
+                if actual_total > 0 else None
+            ),
+            "actual_units_evaluated": round(actual_total, 3),
+        }
+
+    eligible = [
+        (model, metrics["wape_pct"])
+        for model, metrics in results.items()
+        if metrics["wape_pct"] is not None
+    ]
+    best = min(eligible, key=lambda item: item[1])[0] if eligible else None
+    return {
+        "status": "evaluated",
+        "evaluation_method": "expanding_window_rolling_origin",
+        "horizon_days": horizon_days,
+        "min_train_days": min_train_days,
+        "step_days": step_days,
+        "required_history_days": required_days,
+        "available_history_days": len(values),
+        "origin_count": len(range(min_train_days, len(values) - horizon_days + 1, step_days)),
+        "models": results,
+        "best_baseline_by_wape": best,
+        "metric_notes": {
+            "mae_horizon_units": "Mean absolute error in total units per forecast horizon",
+            "wape_pct": "Weighted absolute percentage error over evaluated horizons",
+            "bias_pct": "Positive means over-forecast; negative means under-forecast",
+        },
+    }
 
 def calculate_reorder(
     daily_demand: float,
