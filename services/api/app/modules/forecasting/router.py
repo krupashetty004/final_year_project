@@ -169,6 +169,8 @@ def list_reorder_suggestions(
     return {"suggestions": [
         {
             "id": str(row.id), "product_id": str(row.product_id),
+            "sku_code": (db.get(Product, row.product_id).sku_code if db.get(Product, row.product_id) else ""),
+            "product_name": (db.get(Product, row.product_id).name if db.get(Product, row.product_id) else ""),
             "current_available_qty": float(row.current_available_qty),
             "suggested_qty": float(row.rounded_suggested_qty),
             "supplier_pack_size": float(row.supplier_pack_size),
