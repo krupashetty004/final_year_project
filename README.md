@@ -27,7 +27,7 @@ Agentic AI-powered hyperlocal commerce platform for verified Kirana stores.
 ### Still incomplete for O1
 
 - YOLO11 is currently a **generic pretrained object detector**, not a grocery-packaging detector trained/evaluated on the target product set.
-- The CLIP reference-image path is now implemented, but no store reference-photo collection or labelled shelf-image evaluation has been supplied yet. The 0.58 cosine threshold is provisional and is not a measured confidence threshold.
+- The CLIP reference-image path is implemented. A labelled evaluation utility now reports top-1 SKU accuracy, matching precision/recall, unknown-item rejection, and a threshold recommendation. No store reference-photo collection or labelled shelf-image evaluation data has been supplied yet, so the 0.58 cosine threshold remains provisional and no real-world accuracy claim is available.
 - The model does not reliably count hidden, stacked or occluded products. Physical quantity confirmation remains mandatory.
 - Advanced forecasting (LightGBM, N-HiTS), production model selection and external validation on representative real-store sales are not implemented. Current rolling-origin metrics reflect only the selected store's available history and can include synthetic seed data.
 - There is no validated production dataset or measured real-world shelf detection/SKU matching accuracy. CLIP similarity scores are ranking signals, not calibrated probabilities.
@@ -123,7 +123,7 @@ The GitHub Actions validation workflow checks:
 
 - Frontend: TypeScript, production build and existing Node tests.
 - API: unit tests plus PostgreSQL-backed integration tests covering Alembic migration, SQLite seed import, owner authentication, tenant isolation, inventory reads and shelf-photo review history.
-- Vision: OCR fallback and CLIP cosine-ranking tests without downloading model weights. Full inference/reference-image embedding requires downloading the configured CLIP and YOLO weights on first use.
+- Vision: OCR fallback, CLIP cosine-ranking and labelled-evaluation calibration tests without downloading model weights. Full inference/reference-image embedding requires downloading the configured CLIP and YOLO weights on first use.
 
 Run the checks locally:
 
@@ -144,6 +144,19 @@ pytest -q test_pipeline.py
 ~~~
 
 The vision utility tests do not verify full YOLO/EasyOCR inference. Full inference requires installing the vision requirements and downloading model weights on first use.
+
+### Labelled image-matching evaluation
+
+The evaluation utility consumes JSONL rows containing a query crop embedding, the expected SKU ID (or `null` for an unknown product), and the candidate catalogue's reference embeddings. It reports known-item top-1 accuracy, match precision/recall/F1, unknown-item rejection, and a calibrated threshold when both known and unknown labels are present.
+
+Run from `services/vision` after preparing a labelled embedding JSONL file:
+
+~~~powershell
+python evaluate_matching.py .\data\labelled_shelf_embeddings.jsonl --output .\reports\matching_calibration.json
+~~~
+
+Each sample must contain `query_id`, `expected_product_id`, a 512-value `query_embedding`, and a `catalogue` list whose products include `product_id`, `sku_code`, and `reference_embeddings` (a list of 512-value vectors). Set `expected_product_id` to JSON `null` for a genuinely unknown/unlisted item. Use representative lighting, angles, packaging variants and unknown products. Keep a separate held-out test set: calibration-set metrics are not final test accuracy. The report explicitly treats cosine similarity as a ranking score, not a probability.
+
 
 ## Important security, data and deployment limitations
 
