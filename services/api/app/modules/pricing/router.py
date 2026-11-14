@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from math import ceil
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -10,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_owner, require_owned_store
+from app.core.pricing_guardrails import validate_daily_price_change
 from app.database.session import get_db
 from app.models.entities import (
     CompetitorPrice, OwnerApproval, PriceHistory, PricingRecommendation, Product,
@@ -362,22 +362,18 @@ def decide_recommendation(
     )
     if final_price < min_price:
         raise HTTPException(status_code=422, detail="Approved price violates minimum margin")
-    lower = ceil(item.selling_price_paise * 0.90 / 100) * 100
-    upper = int(item.selling_price_paise * 1.10 // 100) * 100
-    if not lower <= final_price <= upper:
-        raise HTTPException(status_code=422, detail="Approved price exceeds the 10% daily movement guardrail")
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if item.last_price_changed_at_utc and item.last_price_changed_at_utc >= today_start:
-        raise HTTPException(status_code=409, detail="A price change has already been approved today")
     old_price = item.selling_price_paise
     price_changed = final_price != old_price
-    if price_changed and item.last_price_changed_at_utc:
-        changed_at = item.last_price_changed_at_utc
-        if changed_at.tzinfo is None:
-            changed_at = changed_at.replace(tzinfo=timezone.utc)
-        india_tz = ZoneInfo("Asia/Kolkata")
-        if changed_at.astimezone(india_tz).date() == now.astimezone(india_tz).date():
-            raise HTTPException(status_code=409, detail="A price change has already been recorded for this SKU today")
+    try:
+        validate_daily_price_change(
+            old_price,
+            final_price,
+            item.last_price_changed_at_utc,
+            now,
+        )
+    except ValueError as exc:
+        status_code = 409 if "already been recorded" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc))
     if price_changed:
         item.selling_price_paise = final_price
         item.last_price_changed_at_utc = now
