@@ -55,19 +55,24 @@ def forecast_demand(
         daily_mean = mean(sample)
         sigma = pstdev(sample) if len(sample) > 1 else 0.0
     elif model == "croston_tsb":
-        non_zero = [value for value in values if value > 0]
         sigma = pstdev(values) if len(values) > 1 else 0.0
-        if non_zero:
-            demand_size = mean(non_zero)
-            occurrence_probability = len(non_zero) / len(values)
-            for value in values:
+        first_demand_index = next(
+            (index for index, value in enumerate(values) if value > 0),
+            None,
+        )
+        if first_demand_index is None:
+            daily_mean = 0.0
+        else:
+            # Initialise occurrence probability from the first inter-demand
+            # interval and demand size from the first non-zero observation.
+            demand_size = values[first_demand_index]
+            occurrence_probability = 1.0 / (first_demand_index + 1)
+            for value in values[first_demand_index + 1:]:
                 occurrence = 1.0 if value > 0 else 0.0
                 occurrence_probability += beta * (occurrence - occurrence_probability)
                 if value > 0:
                     demand_size += alpha * (value - demand_size)
             daily_mean = occurrence_probability * demand_size
-        else:
-            daily_mean = 0.0
     else:
         raise ValueError("model must be moving_average, seasonal_naive or croston_tsb")
     predicted = (
