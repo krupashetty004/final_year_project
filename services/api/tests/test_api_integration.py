@@ -197,15 +197,24 @@ def test_owner_can_run_sku_rolling_origin_backtest(owner_client):
         )
     assert product_id is not None
 
-    response = client.get(
+    endpoint = (
         f"/api/v1/forecasting/stores/{store_id}/products/{product_id}/backtest"
-        "?horizon_days=7&min_train_days=28&step_days=7",
+        "?horizon_days=7&min_train_days=28&step_days=7"
+    )
+    real_only = client.get(endpoint, headers=headers)
+    assert real_only.status_code == 422, real_only.text
+    assert "No real sales history" in real_only.json()["detail"]
+
+    response = client.get(
+        endpoint + "&include_synthetic=true",
         headers=headers,
     )
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["status"] == "evaluated"
     assert payload["origin_count"] > 0
+    assert payload["include_synthetic"] is True
+    assert payload["data_quality"] == "synthetic_history_included"
     assert set(payload["models"]) == {"moving_average", "seasonal_naive", "croston_tsb"}
     assert all("wape_pct" in metrics for metrics in payload["models"].values())
 
