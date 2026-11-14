@@ -69,6 +69,36 @@ def test_demo_owner_can_read_catalogue_and_sales_history(owner_client):
     assert isinstance(history.json()["series"], list)
 
 
+
+def test_inventory_store_metadata_requires_owner_and_is_tenant_scoped(owner_client):
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+
+    assert client.get("/api/v1/inventory/stores").status_code == 401
+    assert client.get(f"/api/v1/inventory/stores/{store_id}/summary").status_code == 401
+
+    stores = client.get("/api/v1/inventory/stores", headers=headers)
+    assert stores.status_code == 200, stores.text
+    assert all(row["id"] == store_id for row in stores.json())
+
+    summary = client.get(
+        f"/api/v1/inventory/stores/{store_id}/summary",
+        headers=headers,
+    )
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["store_id"] == store_id
+
+
+def test_owner_can_list_persisted_shelf_photo_reviews(owner_client):
+    client, headers = owner_client
+    store_id = client.get("/api/v1/stores", headers=headers).json()["stores"][0]["id"]
+    response = client.get(
+        f"/api/v1/inventory/stores/{store_id}/images",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert isinstance(response.json()["uploads"], list)
+
 def test_store_data_cannot_be_read_by_another_owner(owner_client):
     client, headers = owner_client
     stores = client.get("/api/v1/stores", headers=headers).json()["stores"]
